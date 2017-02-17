@@ -22,7 +22,7 @@ class OsmLoader(object):
                      'primary': 40, 'trunk': 50, 'motorway': 65}
     oneway_roads = ['motorway', 'trunk']
 
-    def __init__(self, path):
+    def __init__(self, path, lat_max=40.9, lat_min=40.6, lon_max=-73.750, lon_min=-74.050):
         """load osm data and extract attributes of roads
         """
         with open(path) as f:
@@ -38,8 +38,9 @@ class OsmLoader(object):
 
         for elem in elements:
             if elem['type'] == 'node':
-                node_lats.append(elem['lat'])
-                node_lons.append(elem['lon'])
+                lat, lon = elem['lat'], elem['lon']
+                node_lats.append(lat)
+                node_lons.append(lon)
                 node_ids.append(elem['id'])
             elif (elem['type'] == 'way') and ('highway' in elem.get('tags', [])):
                 highways.append(elem['nodes'])
@@ -48,8 +49,8 @@ class OsmLoader(object):
                 highway_oneway.append(elem['tags'].get('oneway', 'N/A'))
                 highway_maxspeed.append(elem['tags'].get('maxspeed', '0'))
 
-        print len(node_ids)
-        print len(highways)
+        print "# of nodes: %d" % len(node_ids)
+        print "# of highways: %d" % len(highways)
         for i, oneway in enumerate(highway_oneway):
             if oneway == 'yes':
                 highway_oneway[i] = 1
@@ -99,7 +100,7 @@ class OsmLoader(object):
         self.highway_nodes = all_nodes.loc[highway_node_ids]
 
 
-    def get_graph(self, drive=True, max_length=250, coarse=False):
+    def get_graph(self, drive=True, walk=False, road_max_length=150, seg_max_length=150, coarse=False):
         """represent a road network as a graph in which each edge has:
         --id:       road id number
         --length:   entire road length
@@ -124,11 +125,13 @@ class OsmLoader(object):
         node_ids = self.node_ids[:]
         counter = self.counter.copy()
 
-        if coarse: max_length = 1000000
+        self.max_node_id = max(self.node_ids)
+
+        if coarse: seg_max_length = 1000000
         G = nx.DiGraph() if drive else nx.Graph()
 
         for j, lst in enumerate(self.highway):
-            if drive and self.motorway[j] == -1:
+            if not walk and self.motorway[j] == -1:
                 continue
             elif not drive and self.motorway[j] == 1:
                 continue
@@ -144,10 +147,10 @@ class OsmLoader(object):
                 if coarse or (self.counter[node] > 2) or (i == len(lst)-1):
                     lengths = list(np.float16(gh.distance_in_meters(lats[:-1], lons[:-1], lats[1:], lons[1:])))
                     road_data = nodes, lats, lons, lengths
-                    road_data = self.split_road(road_data, max_length)
-                    temp_max_length = max_length
+                    road_data = self.split_road(road_data, seg_max_length)
+                    temp_max_length = road_max_length
                     if G.has_edge(nodes[0], nodes[-1]) or G.has_edge(nodes[-1], nodes[0]):
-                        temp_max_length = min(max_length, sum(lengths) - 0.1)
+                        temp_max_length = min(road_max_length, sum(lengths) - 0.0001)
                         if len(nodes) <= 2:
                             road_data = self.split_road(road_data, temp_max_length)
 
@@ -157,10 +160,13 @@ class OsmLoader(object):
                     lats = [self.highway_nodes.loc[node, 'lat']]
                     lons = [self.highway_nodes.loc[node, 'lon']]
 
-        nodes = G.nodes()
+        # Remove edges whose nodes are the same
+        for u, v, l in G.edges_iter(data='length'):
+            if l < 1 and u == v:
+                G.remove_edge(u, v)
+
         for i, node in enumerate(self.node_ids):
-            if node in nodes:
-                nodes.remove(node)
+            if node in G.node:
                 G.node[node]['lat'] = self.node_lats[i]
                 G.node[node]['lon'] = self.node_lons[i]
 
@@ -178,10 +184,13 @@ class OsmLoader(object):
 
         bearings = list(gh.bearing_in_radians(lats[:-1], lons[:-1], lats[1:], lons[1:]))
 
+
         while k >= 0:
-            lengths[k] = lengths[k] / 2
+            # lengths[k] = lengths[k] / 2
+            lengths[k] -= max_length
             lat, lon = gh.end_lat_lon(lats[k], lons[k], lengths[k], bearings[k])
-            node = max(self.node_ids)+1
+            self.max_node_id += 1
+            node = self.max_node_id
             self.node_ids.append(node)
             self.node_lats.append(lat)
             self.node_lons.append(lon)
@@ -189,7 +198,8 @@ class OsmLoader(object):
             nodes.insert(k+1, node)
             lats.insert(k+1, lat)
             lons.insert(k+1, lon)
-            lengths.insert(k+1, lengths[k])
+            # lengths.insert(k+1, lengths[k])
+            lengths.insert(k+1, max_length)
             bearings.insert(k+1, bearings[k])
             k = next((i for i, x in enumerate(lengths) if x > max_length), -1)
 
@@ -228,22 +238,8 @@ class OsmLoader(object):
             if self.oneway[road_id] == -1:
                 s, e = e, s
             elif self.oneway[road_id] == 0:
-                G.add_edge(e, s, id=road_id, length=road_length, bearing=bearings)
+                G.add_edge(e, s, id=road_id, length=road_length)#, bearing=bearings)
 
         G.add_edge(s, e, id=road_id, length=road_length, lat=lats, lon=lons,
                    seg_length=seg_lengths, bearing=bearings)
         return G
-
-
-    def road_density(self, edges):
-        road_density = defaultdict(int)
-        for edge in edges:
-            for lat, lon in edge[1:-1]:
-                road_density[Geohash.encode(lat, lon, precision=7)] += 1
-        return road_density
-
-    def intxn_density(self, nodes):
-        intxn_density = defaultdict(int)
-        for lat, lon in nodes:
-            intxn_density[Geohash.encode(lat, lon, precision=7)] += 1
-        return intxn_density

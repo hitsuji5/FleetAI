@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from mapper.geohelper import distance_in_meters
+from engine.mapper.geohelper import distance_in_meters
 import Geohash
 import datetime
 

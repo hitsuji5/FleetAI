@@ -5,77 +5,84 @@ from model.eta import ETA
 from mapper import geohelper as gh
 import Geohash
 
-
 # Constant Parameters
 TIMESTEP = 60
-GEOHASH_PRECISION = 5
+GEOHASH_PRECISION = 7
 
 class FleetSimulator(object):
-    def __init__(self, G):
+    def __init__(self, G, dataset):
         self.router = PathGenerator(G)
+        self.all_requests = dataset
+        self.requests = pd.DataFrame(columns=dataset.columns)
         self.vehicles = []
-        self.all_requests = None
         self.current_time = 0
         self.eta = ETA()
-        self.noservice_penalty = -10
-        self.reposition_cost = 0
+        # self.reject_penalty = -1000
 
     def init_vehicles(self, N):
-        init_locations = self.all_requests[['pickup_latitude', 'pickup_longitude']].values[:N]
+        init_locations = self.all_requests[['plat', 'plon']].values[:N]
         self.vehicles = [Vehicle(i, init_locations[i]) for i in range(N)]
 
-    def load_requests(self, path, nrows):
-        usecols = ['trip_time', 'pickup_zone', 'pickup_longitude', 'pickup_latitude',
-                   'dropoff_zone', 'dropoff_longitude', 'dropoff_latitude', 'second']
-        self.all_requests = pd.read_csv(path, nrows=nrows, usecols=usecols)
-        self.all_requests['pickup_zone'] = self.all_requests['pickup_zone'].str[:-2]
-        self.all_requests['dropoff_zone'] = self.all_requests['dropoff_zone'].str[:-2]
-        self.requests = pd.DataFrame(columns=usecols)
-
-    def forward(self, assignments=None):
-        reward = 0
-        reward += self.assign(assignments)
+    def forward(self):
+        cost = 0
+        # wtsq, reject = self.assign(assignments)
         vehicles = []
         for vehicle in self.vehicles:
-            reward += vehicle.transition()
+            cost += vehicle.transition()
             vehicles.append(vehicle.get_state())
-        vehicles = pd.DataFrame(vehicles, columns=['id', 'available', 'lat', 'lon', 'zone', 'dlat', 'dlon', 'dzone', 'eta'])
-        self.requests = self.requests.append(self.all_requests[self.all_requests.second >= self.current_time][
-            self.all_requests.second < self.current_time + TIMESTEP])
+        vehicles = pd.DataFrame(vehicles, columns=['id', 'available', 'lat', 'lon', 'geohash', 'tlat', 'tlon', 'tgeohash', 'eta'])
+        self.requests = self.all_requests[self.all_requests.second >= self.current_time][
+            self.all_requests.second < self.current_time + TIMESTEP]
         self.current_time += TIMESTEP
-        return vehicles, self.requests, reward
+        return vehicles, self.requests, cost#(wtsq, reject, cost)
 
     def assign(self, assignments):
-        reward = 0
+        sumwt = 0
+        reject = 0
         if assignments:
             for r, v in assignments:
                 vehicle = self.vehicles[v] # pointer to a Vehicle object
                 request = self.requests.loc[r]
-                pickup = (request.pickup_latitude, request.pickup_longitude)
-                dropoff = (request.dropoff_latitude, request.dropoff_longitude)
-                wait_time = self.eta.predict(vehicle.location, pickup)
-                if vehicle.service(dropoff, wait_time, request.trip_time):
-                    reward -= wait_time**2
+                pickup = (request.plat, request.plon)
+                dropoff = (request.dlat, request.dlon)
+                wait_time = self.eta.predict_wait_time(vehicle.location, pickup)
+                trip_time = request.trip_time
+                # trip_time = self.eta.predict_trip_time(request.trip_distance)
+                if vehicle.service(dropoff, wait_time, trip_time):
+                    sumwt += wait_time
                 else:
-                    print "The vehicle #%d is not available." % v
-                    reward = -float('inf')
-            self.requests.drop([r for r, _ in assignments], inplace=True)
-        reward += len(self.requests) * self.noservice_penalty
+                    print "The vehicle #%d is not available for service." % v
+                    reject += 1
+            # self.requests.drop([r for r, _ in assignments], inplace=True)
+            reject = len(self.requests) - len(assignments)
 
-        return reward
+        vehicles = []
+        for vehicle in self.vehicles:
+            vehicles.append(vehicle.get_state())
+        vehicles = pd.DataFrame(vehicles, columns=['id', 'available', 'lat', 'lon', 'geohash', 'tlat', 'tlon', 'tgeohash', 'eta'])
 
-    def reposition(self, actions):
-        reward = 0
+        return vehicles, sumwt, reject
+
+    def reposition(self, actions, noise=1e-3):
         for v, loc in actions:
+            # print "Vehicle #%d" % v
             vehicle = self.vehicles[v]
-            trip_time = self.eta.predict(vehicle.location, loc)
-            path = self.router.get_path(vehicle.location, loc, trip_time)
-            if vehicle.route(loc, path, trip_time):
-                reward -= self.reposition_cost
-            else:
-                print "The vehicle #%d is not available." % v
-                reward = -float('inf')
-        return reward
+            ntry = 0
+            while 1:
+                try:
+                    path, trip_time = self.router.get_path(vehicle.location, loc, kmph=25)
+                    break
+                except:
+                    if ntry > 10:
+                        raise
+                    ntry += 1
+                    vehicle.location = [g + np.random.normal(scale=noise) for g in vehicle.location]
+                    loc = [g + np.random.normal(scale=noise) for g in loc]
+
+
+            if not vehicle.route(loc, path, trip_time):
+                print "The vehicle #%d is not available for repositioning." % v
+        return
 
     def visualize(self):
         vlocs = [v.location for v in self.vehicles]
@@ -110,21 +117,24 @@ class Vehicle(object):
         self.destination_zone = Geohash.encode(lat, lon, precision=GEOHASH_PRECISION)
 
     def transition(self):
-        reward = 0
+        cost = 0
         if self.eta > 0:
             time = min(TIMESTEP/60.0, self.eta)
             self.eta -= time
             if self.available:
-                self.update_location(self.trajectory.pop(0))
+                if self.trajectory:
+                    self.update_location(self.trajectory.pop(0))
+                else:
+                    print self.eta
                 ##TODO temporary reward
-                reward = -time
+                cost = time
         if self.eta <= 0 and not self.available:
             self.location = self.destination_location
             self.zone = self.destination_zone
             self.available = True
             self.destination_location = None
             self.destination_zone = None
-        return reward
+        return cost
 
     def service(self, destination, wait_time, trip_time):
         if not self.available:

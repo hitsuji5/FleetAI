@@ -1,5 +1,8 @@
 import numpy as np
 import folium
+from collections import defaultdict
+import Geohash
+
 
 R = 6371000#earth's radius in meters.
 
@@ -77,6 +80,22 @@ def nodes_within_square(G, upper, lower):
                 if (d['lon'] <= upper[1] and d['lon'] >= lower[1]) and (d['lat'] <= upper[0] and d['lat'] >= lower[0]))
     nodes = nodes.union(set(v for u in nodes for v in G.neighbors(u)))
     return nodes
+
+
+def road_density(edges):
+    road_density = defaultdict(int)
+    for edge in edges:
+        for lat, lon in edge[1:-1]:
+            road_density[Geohash.encode(lat, lon, precision=7)] += 1
+    return road_density
+
+
+def intxn_density(nodes):
+    intxn_density = defaultdict(int)
+    for lat, lon in nodes:
+        intxn_density[Geohash.encode(lat, lon, precision=7)] += 1
+    return intxn_density
+
 
 
 def visualize_trajectory(center_lat_lon=[40.75773, -73.985708],
@@ -171,6 +190,6 @@ def plot_overmap(point_x, point_y, radius, gdf):
     plotting.show(p)
     return
     
-    
+
 
     

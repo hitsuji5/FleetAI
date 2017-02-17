@@ -1,11 +1,12 @@
 .DS_Store
 .idea/
 .ipynb_checkpoints/
-engine/analytics/.ipynb_checkpoints/
-engine/analytics/data/
+analytics/.ipynb_checkpoints/
+analytics/data/
 *.pyc
 temp/
 engine/data/
+engine/model/pickle/
 *.html
 #*.ipynb
 venv/
