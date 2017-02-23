@@ -8,5 +8,5 @@ temp/
 engine/data/
 engine/model/pickle/
 *.html
-#*.ipynb
+engine/*.ipynb
 venv/
