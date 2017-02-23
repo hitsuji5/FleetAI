@@ -40,46 +40,68 @@ class PathGenerator(object):
         else:
             return path
 
+    def map_matching_shortest_path(self, origin, destination, weight='length', noise=1e-3, maxtry=5):
+        ptry = 0
+        while 1:
+            mmtry = 0
+            lat, lon = origin
+            while 1:
+                try:
+                    su, sv, sd = self.map_match((lat, lon))
+                    break
+                except:
+                    print "MM ERROR: ", origin
+                    if mmtry > maxtry:
+                        raise
+                    mmtry += 1
+                    lat += np.random.uniform(-noise, noise)
+                    lon += np.random.uniform(-noise, noise)
 
-    def get_path(self, origin, destination, kmph=20, weight='length'):
+            mmtry = 0
+            lat, lon = destination
+            while 1:
+                try:
+                    tu, tv, td = self.map_match((lat, lon))
+                    break
+                except:
+                    print "MM ERROR: ", destination
+                    if mmtry > maxtry:
+                        raise
+                    mmtry += 1
+                    lat += np.random.uniform(-noise, noise)
+                    lon += np.random.uniform(-noise, noise)
+
+            try:
+                path = self.shortest_path(su, tu, weight=weight)
+                break
+            except:
+                print "A* Path ERROR: %d, %d" % (su, tu)
+                if ptry > maxtry:
+                    raise
+                ptry += 1
+                if len(nx.single_source_dijkstra_path_length(self.G, su)) < 1000:
+                    self.G.remove_node(su)
+                    print "REMOVE: %d" % su
+
+                if len(nx.single_source_dijkstra_path_length(self.G, tu)) < 1000:
+                    self.G.remove_node(tu)
+                    print "REMOVE: %d" % tu
+
+
+        if len(path) < 2:
+            raise ValueError
+
+        source = su, sv, sd
+        target = tu, tv, td
+        return path, source, target
+
+
+    def generate_path(self, origin, destination, step):
         """determine the shortest path from source to target and return locations on the path
-
-        Parameters
-        ----------
-        source:         int; a node id of origin
-        target:         int; a node id of destination
-        speed:          float; average speed of a vehicle/person (km/h)
-        speed_range:    float; range of speed from the average speed
-                        (speed is randomly picked from [speed-speed_range, speed+speed_range]
-        cycle:          float; sampling frequency (s)
-        weight:         string; weight of edge in graph for the shortest path search
-
-        Returns
-        -------
-        ts:             list; timestamp (on the real path)
-        lats:           list; latitudes
-        lons:           list; longitudes
-        road_ids:       list; road ids
         """
-        try:
-            su, sv, sd = self.map_match(origin)
-        except:
-            print "Map Match Error", origin
-            raise
-
-        try:
-            tu, tv, td = self.map_match(destination)
-        except:
-            print "Map Match Error", destination
-            raise
-
-        try:
-            path = self.shortest_path(su, tu, weight)
-        except:
-            print "No Path Error: %d -> %d" % (su, tu)
-            raise
-
-        step = (kmph / 3.6) * self.cycle
+        path, source, target = self.map_matching_shortest_path(origin, destination)
+        su, sv, sd = source
+        tu, tv, td = target
         trajectory = []
         ds = step
 
@@ -148,9 +170,7 @@ class PathGenerator(object):
             trajectory += locs
             d -= l
 
-        trip_time = len(trajectory) * self.cycle / 60
-
-        return trajectory, trip_time
+        return trajectory
 
     def create_trajectory(self, lat, lon, bearing, distance, step, init_step):
         lats = []
@@ -183,7 +203,7 @@ class PathGenerator(object):
 
         return lats, lons, bearings, lengths
 
-    def map_match(self, loc, geo_range=0.0015):
+    def map_match(self, loc, geo_range=0.0018):
         """Search the most probable path on which the GPS signals are observed in a given graph
 
         Parameters
@@ -220,7 +240,7 @@ class PathGenerator(object):
         return u, v, d
 
 
-    def mm_convert(self, loc, georange=0.0015):
+    def mm_convert(self, loc, georange=0.0018):
         u, v, d = self.map_match(loc, georange)
         lats, lons, bearings, lengths = self.get_segments_in_order(u, v)
 
@@ -293,7 +313,7 @@ class PathGenerator(object):
         # sub_id = gh.nodes_within_square(self.G, [lat_max, lon_max], [lat_min, lon_min])
         lats = self.node_lats
         lons = self.node_lons
-        sub_ids = self.node_ids[(lats < lat_max) * (lats > lat_min) * (lons < lon_max) * (lons > lon_min)]
+        sub_ids = self.node_ids[(lats < lat_max) & (lats > lat_min) & (lons < lon_max) & (lons > lon_min)]
         return self.G.subgraph(sub_ids)
 
 

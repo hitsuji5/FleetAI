@@ -23,19 +23,14 @@ def load_trip_data(path, cols, month):
 
 
 def remove_outliers(df):
-    # lon_max = -73.700165 + 0.1
-    # lon_min = -74.259094 - 0.1
-    # lat_max = 40.91758 + 0.1
-    # lat_min = 40.477398 - 0.1
-    # df = df[(df.pickup_latitude>lat_min) & (df.pickup_latitude<lat_max)]
-    # df = df[(df.pickup_longitude>lon_min) & (df.pickup_longitude<lon_max)]
-    # df = df[(df.dropoff_latitude>lat_min) & (df.dropoff_latitude<lat_max)]
-    # df = df[(df.dropoff_longitude>lon_min) & (df.dropoff_longitude<lon_max)]
     df['great_circle_distance'] = distance_in_meters(df.pickup_latitude, df.pickup_longitude,
                                                      df.dropoff_latitude, df.dropoff_longitude).astype(int)
     df = df[(df.trip_time>1.0) & (df.trip_time<60*3)]
     df = df[(df.trip_distance>0.1) & (df.trip_distance<100)]
     df = df[(df.great_circle_distance>100) & (df.great_circle_distance<100000)]
+    df['great_circle_speed'] = df['great_circle_distance'] / df.trip_time / 1000 * 60
+    df = df[df.great_circle_speed > 2]
+    df = df[df.great_circle_speed < 150]
     return df
 
 def bbox(df, left, right, top, bottom):
@@ -76,9 +71,6 @@ if __name__ == '__main__':
     # Tag geohash code and remove the area in which it is too rare to pickup/dropoff
     df['pickup_geohash'] = geohashing(df[['pickup_latitude', 'pickup_longitude']])
     df['dropoff_geohash'] = geohashing(df[['dropoff_latitude', 'dropoff_longitude']])
-    # pattern = 'dr(?:5qu|5qv|5r5|5r7|5re|5rg|5rh|5rj|5rk|5rm|5rn|5rq|5rr|5rs|5rt|5ru|5rv|5rw|5rx|5ry|5rz|5x0|5x1|5x2|5x3|5x8|5x9|5xb|5xc|72h|72j|72m|72n|72p|72q|72r|72t|72w|72x|780|782|788)'
-    # df = df[df.pickup_zone.str[:-2].str.match(pattern)]
-    # df = df[df.dropoff_zone.str[:-2].str.match(pattern)]
 
     df.sort_values(by='second', ascending=True, inplace=True)
     df.reset_index(drop=True, inplace=True)

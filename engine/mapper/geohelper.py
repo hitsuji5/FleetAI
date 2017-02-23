@@ -157,10 +157,12 @@ def visualize_states(vehicle_locs, request_locs,
 import shapely
 from bokeh.models import Range1d
 from bokeh import plotting
+import geopandas as gpd
 
-def plot_overmap(point_x, point_y, radius, gdf):
+def plot_overmap(point_x, point_y, radius, shape_file_path):
     world_xs = []
     world_ys = []
+    gdf = gpd.read_file(shape_file_path).to_crs('+proj=latlon')
 
     for i, row in gdf.iterrows():
         polygons = row['geometry']

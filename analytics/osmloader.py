@@ -1,12 +1,9 @@
-# import logging
-# logger = logging.getLogger(__name__)
-
 import json
 import re
 import pandas as pd
 import numpy as np
 import networkx as nx
-import geohelper as gh
+import engine.mapper.geohelper as gh
 from collections import Counter
 
 class OsmLoader(object):
