@@ -1,5 +1,5 @@
 import numpy as np
-import folium
+# import folium
 from collections import defaultdict
 import Geohash
 
@@ -95,102 +95,102 @@ def intxn_density(nodes):
     for lat, lon in nodes:
         intxn_density[Geohash.encode(lat, lon, precision=7)] += 1
     return intxn_density
-
-
-
-def visualize_trajectory(center_lat_lon=[40.75773, -73.985708],
-                         filename='trajectory.html', graph_data=None,
-                         edge_color='gray',
-                         zoom_start=15, lat_lon_popover=False,
-                         blue_lat_lon=None, blue_radius=None,
-                         red_lat_lon=None, red_radius=None,
-                         green_lat_lon=None, green_radius=None,
-                         marker_locs=None):
-
-    map_ = folium.Map(location=list(center_lat_lon), zoom_start=zoom_start)
-
-    if graph_data is not None:
-        for e in graph_data:
-            map_.line(e, line_color=edge_color)
-
-    def map_trajectory(lat_lon_lst, radius, color='blue', line_color='purple'):
-
-        if radius is None:
-            radius = np.ones(len(lat_lon_lst))*5
-        map_.add_children(folium.PolyLine(lat_lon_lst, color=line_color))
-        for loc, r in zip(lat_lon_lst, radius):
-            map_.add_children(folium.CircleMarker(location=loc, radius=r, color=color))
-
-    if red_lat_lon is not None:
-        map_trajectory(red_lat_lon, red_radius, 'red', line_color='purple')
-
-    if blue_lat_lon is not None:
-        map_trajectory(blue_lat_lon, blue_radius, 'blue', line_color='blue')
-
-    if green_lat_lon is not None:
-        map_trajectory(green_lat_lon, green_radius, 'green', line_color='green')
-
-    if marker_locs is not None:
-        for loc in marker_locs:
-            # map_.simple_marker(loc, popup='%f, %f'%tuple(loc))
-            map_.add_children(folium.Marker(location=loc))
-    if lat_lon_popover is not None:
-        map_.add_children(folium.LatLngPopup())
-        # map_.lat_lng_popover()
-    map_.save(filename)
-    print("file created!")
-
-def visualize_states(vehicle_locs, request_locs,
-                     center_lat_lon=[40.75773, -73.985708],
-                     filename='states.html', zoom_start=15):
-
-    map_ = folium.Map(location=list(center_lat_lon), zoom_start=zoom_start)
-    for loc in vehicle_locs:
-        map_.add_children(folium.RegularPolygonMarker(loc, fill_color='#43d9de', radius=8))
-    for loc in request_locs:
-        map_.add_children(folium.Marker(location=loc))
-    map_.save(filename)
-    print("file created!")
-
-
-
-import shapely
-from bokeh.models import Range1d
-from bokeh import plotting
-import geopandas as gpd
-
-def plot_overmap(point_x, point_y, radius, shape_file_path):
-    world_xs = []
-    world_ys = []
-    gdf = gpd.read_file(shape_file_path).to_crs('+proj=latlon')
-
-    for i, row in gdf.iterrows():
-        polygons = row['geometry']
-        if isinstance(polygons, shapely.geometry.multipolygon.MultiPolygon):
-            polygons = [x for x in polygons]
-        elif isinstance(polygons, shapely.geometry.polygon.Polygon):
-            polygons = [polygons]
-        else:
-            raise ValueError
-
-        for p in polygons:
-            lons, lats = zip(*list(p.exterior.coords))
-            world_xs.append(lons)
-            world_ys.append(lats)
-
-    plotting.output_notebook()
-    p = plotting.figure(toolbar_location="left", plot_width=600, plot_height=500)
-    p.patches(world_xs, world_ys, fill_color='white',
-              line_color="black", line_width=0.2)
-    left, right = -74.05, -73.75
-    top, bottom = 40.9, 40.6
-    p.set(x_range=Range1d(left, right), y_range=Range1d(bottom, top))
-    p.scatter(point_x, point_y,
-        radius=radius,
-        fill_alpha=0.2, color='red'
-    )
-    plotting.show(p)
-    return
+#
+#
+#
+# def visualize_trajectory(center_lat_lon=[40.75773, -73.985708],
+#                          filename='trajectory.html', graph_data=None,
+#                          edge_color='gray',
+#                          zoom_start=15, lat_lon_popover=False,
+#                          blue_lat_lon=None, blue_radius=None,
+#                          red_lat_lon=None, red_radius=None,
+#                          green_lat_lon=None, green_radius=None,
+#                          marker_locs=None):
+#
+#     map_ = folium.Map(location=list(center_lat_lon), zoom_start=zoom_start)
+#
+#     if graph_data is not None:
+#         for e in graph_data:
+#             map_.line(e, line_color=edge_color)
+#
+#     def map_trajectory(lat_lon_lst, radius, color='blue', line_color='purple'):
+#
+#         if radius is None:
+#             radius = np.ones(len(lat_lon_lst))*5
+#         map_.add_children(folium.PolyLine(lat_lon_lst, color=line_color))
+#         for loc, r in zip(lat_lon_lst, radius):
+#             map_.add_children(folium.CircleMarker(location=loc, radius=r, color=color))
+#
+#     if red_lat_lon is not None:
+#         map_trajectory(red_lat_lon, red_radius, 'red', line_color='purple')
+#
+#     if blue_lat_lon is not None:
+#         map_trajectory(blue_lat_lon, blue_radius, 'blue', line_color='blue')
+#
+#     if green_lat_lon is not None:
+#         map_trajectory(green_lat_lon, green_radius, 'green', line_color='green')
+#
+#     if marker_locs is not None:
+#         for loc in marker_locs:
+#             # map_.simple_marker(loc, popup='%f, %f'%tuple(loc))
+#             map_.add_children(folium.Marker(location=loc))
+#     if lat_lon_popover is not None:
+#         map_.add_children(folium.LatLngPopup())
+#         # map_.lat_lng_popover()
+#     map_.save(filename)
+#     print("file created!")
+#
+# def visualize_states(vehicle_locs, request_locs,
+#                      center_lat_lon=[40.75773, -73.985708],
+#                      filename='states.html', zoom_start=15):
+#
+#     map_ = folium.Map(location=list(center_lat_lon), zoom_start=zoom_start)
+#     for loc in vehicle_locs:
+#         map_.add_children(folium.RegularPolygonMarker(loc, fill_color='#43d9de', radius=8))
+#     for loc in request_locs:
+#         map_.add_children(folium.Marker(location=loc))
+#     map_.save(filename)
+#     print("file created!")
+#
+#
+#
+# import shapely
+# from bokeh.models import Range1d
+# from bokeh import plotting
+# import geopandas as gpd
+#
+# def plot_overmap(point_x, point_y, radius, shape_file_path):
+#     world_xs = []
+#     world_ys = []
+#     gdf = gpd.read_file(shape_file_path).to_crs('+proj=latlon')
+#
+#     for i, row in gdf.iterrows():
+#         polygons = row['geometry']
+#         if isinstance(polygons, shapely.geometry.multipolygon.MultiPolygon):
+#             polygons = [x for x in polygons]
+#         elif isinstance(polygons, shapely.geometry.polygon.Polygon):
+#             polygons = [polygons]
+#         else:
+#             raise ValueError
+#
+#         for p in polygons:
+#             lons, lats = zip(*list(p.exterior.coords))
+#             world_xs.append(lons)
+#             world_ys.append(lats)
+#
+#     plotting.output_notebook()
+#     p = plotting.figure(toolbar_location="left", plot_width=600, plot_height=500)
+#     p.patches(world_xs, world_ys, fill_color='white',
+#               line_color="black", line_width=0.2)
+#     left, right = -74.05, -73.75
+#     top, bottom = 40.9, 40.6
+#     p.set(x_range=Range1d(left, right), y_range=Range1d(bottom, top))
+#     p.scatter(point_x, point_y,
+#         radius=radius,
+#         fill_alpha=0.2, color='red'
+#     )
+#     plotting.show(p)
+#     return
     
 
 

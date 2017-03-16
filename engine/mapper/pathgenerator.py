@@ -1,14 +1,7 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jul 19 13:37:36 2016
-
-@author: takuma
-"""
-
 import numpy as np
 import networkx as nx
 import geohelper as gh
-
+from networkx.exception import NetworkXNoPath
 
 class PathGenerator(object):
     """
@@ -31,7 +24,7 @@ class PathGenerator(object):
     def get_node_locs(self):
         return zip(self.node_lats, self.node_lons)
 
-    def shortest_path(self, source, target, weight='length', distance=False):
+    def shortest_path(self, source, target, weight='length', distance=True):
         ## A* search for shortest path
         path = nx.astar_path(self.G, source, target, self.__grand_circle, weight=weight)
         if distance:
@@ -40,7 +33,7 @@ class PathGenerator(object):
         else:
             return path
 
-    def map_matching_shortest_path(self, origin, destination, weight='length', noise=1e-3, maxtry=5):
+    def map_matching_shortest_path(self, origin, destination, weight='length', noise=1e-3, maxtry=20):
         ptry = 0
         while 1:
             mmtry = 0
@@ -49,7 +42,7 @@ class PathGenerator(object):
                 try:
                     su, sv, sd = self.map_match((lat, lon))
                     break
-                except:
+                except ValueError:
                     print "MM ERROR: ", origin
                     if mmtry > maxtry:
                         raise
@@ -63,7 +56,7 @@ class PathGenerator(object):
                 try:
                     tu, tv, td = self.map_match((lat, lon))
                     break
-                except:
+                except ValueError:
                     print "MM ERROR: ", destination
                     if mmtry > maxtry:
                         raise
@@ -72,9 +65,9 @@ class PathGenerator(object):
                     lon += np.random.uniform(-noise, noise)
 
             try:
-                path = self.shortest_path(su, tu, weight=weight)
+                path, distance = self.shortest_path(su, tu, weight=weight)
                 break
-            except:
+            except NetworkXNoPath:
                 print "A* Path ERROR: %d, %d" % (su, tu)
                 if ptry > maxtry:
                     raise
@@ -87,22 +80,21 @@ class PathGenerator(object):
                     self.G.remove_node(tu)
                     print "REMOVE: %d" % tu
 
-
-        if len(path) < 2:
-            raise ValueError
-
         source = su, sv, sd
         target = tu, tv, td
-        return path, source, target
+        return path, distance, source, target
 
 
-    def generate_path(self, origin, destination, step):
+    def generate_path(self, origin, destination, timestep):
         """determine the shortest path from source to target and return locations on the path
         """
-        path, source, target = self.map_matching_shortest_path(origin, destination)
+        path, distance, source, target = self.map_matching_shortest_path(origin, destination)
+        if len(path) < 3:
+            return [destination]
         su, sv, sd = source
         tu, tv, td = target
         trajectory = []
+        step = distance / timestep
         ds = step
 
         # origin~

@@ -5,8 +5,7 @@ analytics/.ipynb_checkpoints/
 analytics/data/
 *.pyc
 temp/
-engine/data/
-engine/model/pickle/
+data/
 *.html
 engine/*.ipynb
 venv/
