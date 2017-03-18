@@ -68,17 +68,17 @@ class PathGenerator(object):
                 path, distance = self.shortest_path(su, tu, weight=weight)
                 break
             except NetworkXNoPath:
-                print "A* Path ERROR: %d, %d" % (su, tu)
+                print "NetworkXNoPath: %d, %d" % (su, tu)
                 if ptry > maxtry:
                     raise
                 ptry += 1
-                if len(nx.single_source_dijkstra_path_length(self.G, su)) < 1000:
+                if len(nx.single_source_shortest_path_length(self.G, su)) < 1000:
                     self.G.remove_node(su)
-                    print "REMOVE: %d" % su
+                    print "REMOVE NODE: %d" % su
 
-                if len(nx.single_source_dijkstra_path_length(self.G, tu)) < 1000:
+                if len(nx.single_source_shortest_path_length(self.G, tu)) < 1000:
                     self.G.remove_node(tu)
-                    print "REMOVE: %d" % tu
+                    print "REMOVE NODE: %d" % tu
 
         source = su, sv, sd
         target = tu, tv, td

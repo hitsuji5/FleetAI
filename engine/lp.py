@@ -1,8 +1,8 @@
 import numpy as np
 import pulp
 from scipy.stats import norm
+from collections import deque
 
-EXP_MA_PERIOD = 60.0
 GAMMA = 0.9
 ETA_ERROR = 3.0
 MAX_MOVE_TIME = 25.0
@@ -30,10 +30,13 @@ class Agent(object):
     def reset(self, requests, dayofweek, minofday):
         self.dayofweek = dayofweek
         self.minofday = minofday
+        self.request_buffer = deque()
         self.geo_table['W_1'] = 0
+        self.geo_table['W_2'] = 0
         minutes = (requests.second.values[-1] - requests.second.values[0]) / 60.0
-        count = requests.groupby('phash')['plat'].count() * 60.0 / minutes
-        self.geo_table.loc[count.index, 'W_1'] = count.values
+        count = requests.groupby('phash')['plat'].count() * self.cycle / minutes
+        for i in range(60 / self.cycle):
+            self.request_buffer.append(count.copy())
 
 
     def update_time(self, minutes):
@@ -137,14 +140,21 @@ class Agent(object):
 
 
     def update_demand(self, requests):
-        self.geo_table['W_1'] *= (1 - self.cycle / EXP_MA_PERIOD)
+        if len(self.request_buffer) >= 60 / self.cycle:
+            self.request_buffer.popleft()
         count = requests.groupby('phash')['plat'].count()
-        self.geo_table.loc[count.index, 'W_1'] += count.values
+        self.request_buffer.append(count)
+        self.geo_table.loc[:, ['W_1', 'W_2']] = 0
+        for i, W in enumerate(self.request_buffer):
+            if i < 30 / self.cycle:
+                self.geo_table.loc[W.index, 'W_1'] += W.values
+            else:
+                self.geo_table.loc[W.index, 'W_2'] += W.values
 
         self.geo_table['dayofweek'] = self.dayofweek
         self.geo_table['hour'] = self.minofday / 60.0
-        demand = self.demand_model.predict(self.geo_table[['dayofweek', 'hour', 'lat', 'lon',
-                        'road_density', 'intxn_density', 'W_1']])
+        demand = self.demand_model.predict(
+            self.geo_table[['dayofweek', 'hour', 'lat', 'lon', 'road_density', 'W_1']])
         self.geo_table['W'] = demand * self.cycle / 60.0
         return
 

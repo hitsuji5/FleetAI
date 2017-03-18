@@ -6,12 +6,12 @@ from engine.simulator import FleetSimulator
 from engine.dqn import Agent
 
 GRAPH_PATH = 'data/pickle/nyc_network_graph.pkl'
-TRIP_PATH = 'data/nyc_taxi/mmdata_2016-05.csv'
+TRIP_PATH = 'data/nyc_taxi/trips_2016-05.csv'
 ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
 GEOHASH_TABLE_PATH = 'data/table/zones.csv'
 SCORE_PATH = 'data/results/'
 
-NUM_TRIPS = 12821114
+NUM_TRIPS = 12000000
 SAMPLE_SIZE = 100000
 NUM_EPISODES = 1  # Number of episodes the agent plays
 NUM_FLEETS = 8000

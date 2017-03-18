@@ -11,7 +11,7 @@ from keras.layers import Convolution2D, MaxPooling2D, Flatten, Dense, Merge
 KERAS_BACKEND = 'tensorflow'
 DATA_PATH = 'data/dqn'
 ENV_NAME = 'test'
-FRAME_WIDTH = 32  # Resized frame width
+FRAME_WIDTH = 31  # Resized frame width
 FRAME_HEIGHT = 32  # Resized frame height
 STATE_LENGTH = 4  # Number of most recent frames to produce the input to the network
 GAMMA = 0.90  # Discount factor
@@ -21,7 +21,6 @@ FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
 INITIAL_REPLAY_SIZE = 50  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 10000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 10000  # The frequency with which the network is saved
-SUMMARY_INTERVAL = 30
 
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 32
@@ -87,12 +86,12 @@ class Agent(object):
         self.sess = tf.InteractiveSession()
         self.saver = tf.train.Saver(q_network_weights)
         self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summary()
-        self.summary_writer = tf.summary.FileWriter(SAVE_SUMMARY_PATH, self.sess.graph)
+        self.summary_writer = tf.train.SummaryWriter(SAVE_SUMMARY_PATH, self.sess.graph)
 
         if not os.path.exists(SAVE_NETWORK_PATH):
             os.makedirs(SAVE_NETWORK_PATH)
 
-        self.sess.run(tf.global_variables_initializer())
+        self.sess.run(tf.initialize_all_variables())
 
         # Load network
         if LOAD_NETWORK:
@@ -181,9 +180,9 @@ class Agent(object):
 
         df = self.geo_table.groupby(['x', 'y'])[['X_stage', 'X0', 'X1', 'W']].sum().reset_index()
         X_stage = df.pivot(index='x', columns='y', values='X_stage').fillna(0).astype(int).values
-        X0 = np.minimum(df.pivot(index='x', columns='y', values='X0').fillna(0).values, 255).astype(np.uint8)
-        X1 = np.minimum(df.pivot(index='x', columns='y', values='X1').fillna(0).values, 255).astype(np.uint8)
-        W = np.minimum(df.pivot(index='x', columns='y', values='W').fillna(0).values, 255).astype(np.uint8)
+        X0 = df.pivot(index='x', columns='y', values='X0').fillna(0).values.astype(np.uint16)
+        X1 = df.pivot(index='x', columns='y', values='X1').fillna(0).values.astype(np.uint16)
+        W = df.pivot(index='x', columns='y', values='W').fillna(0).values.astype(np.uint16)
         env_state = [X0, X1, W]
 
         return env_state, resource_stage, X_stage
@@ -382,15 +381,15 @@ class Agent(object):
 
     def setup_summary(self):
         total_reward = tf.Variable(0.)
-        tf.summary.scalar(ENV_NAME + '/Total Reward', total_reward)
+        tf.scalar_summary(ENV_NAME + '/Total Reward', total_reward)
         avg_max_q = tf.Variable(0.)
-        tf.summary.scalar(ENV_NAME + '/Average Max Q', avg_max_q)
+        tf.scalar_summary(ENV_NAME + '/Average Max Q', avg_max_q)
         avg_loss = tf.Variable(0.)
-        tf.summary.scalar(ENV_NAME + '/Average Loss', avg_loss)
+        tf.scalar_summary(ENV_NAME + '/Average Loss', avg_loss)
         summary_vars = [total_reward, avg_max_q, avg_loss]
         summary_placeholders = [tf.placeholder(tf.float32) for _ in xrange(len(summary_vars))]
         update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in xrange(len(summary_vars))]
-        summary_op = tf.summary.merge_all()
+        summary_op = tf.merge_all_summaries()
         return summary_placeholders, update_ops, summary_op
 
     def write_summary(self, reward):
