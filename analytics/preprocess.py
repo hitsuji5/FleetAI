@@ -66,8 +66,8 @@ def create_dataset(gtrip_path, ytrip_path):
     yellow_cols = ['tpep_pickup_datetime', 'tpep_dropoff_datetime', 'pickup_longitude', 'pickup_latitude', 'dropoff_longitude', 'dropoff_latitude', 'trip_distance']
 
     # Load green and yellow taxi trip data and merge them
-    df = load_trip_data(gtrip_path, green_cols, 5)
-    df = df.append(load_trip_data(ytrip_path, yellow_cols, 5))
+    df = load_trip_data(gtrip_path, green_cols)
+    df = df.append(load_trip_data(ytrip_path, yellow_cols))
     print("Load: {0:d} records").format(len(df))
 
     # Remove outliers
