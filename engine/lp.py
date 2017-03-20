@@ -10,7 +10,7 @@ STORAGE_USE = False
 
 class Agent(object):
     def __init__(self, geohash_table, eta_table, pdest_table, demand_model,
-                 T=3, cycle=15.0, cost=1.0, penalty=20.0, svv_rate=0.8,
+                 cycle, T=3, cost=1.0, penalty=20.0, svv_rate=0.8,
                  storage=None, storage_saving=5.0):
         self.geo_table = geohash_table
         self.demand_model = demand_model
@@ -18,6 +18,7 @@ class Agent(object):
         self.pdest_table = pdest_table
 
         self.T = T
+        self.time_step = cycle
         self.cycle = cycle
         self.cost = cost
         self.penalty = penalty
@@ -35,19 +36,38 @@ class Agent(object):
         self.geo_table['W_2'] = 0
         minutes = (requests.second.values[-1] - requests.second.values[0]) / 60.0
         count = requests.groupby('phash')['plat'].count() * self.cycle / minutes
-        for i in range(60 / self.cycle):
+        for i in range(int(60 / self.cycle)):
             self.request_buffer.append(count.copy())
 
 
-    def update_time(self, minutes):
-        self.minofday += minutes
+    def update_time(self, ):
+        self.minofday += self.time_step
         if self.minofday >= 1440: # 24 hour * 60 minute
             self.minofday -= 1440
             self.dayofweek = (self.dayofweek + 1) % 7
 
 
-    def get_actions(self, minutes, vehicles, requests):
-        self.update_time(minutes)
+    def update_demand(self, requests):
+        if len(self.request_buffer) >= 60 / self.cycle:
+            self.request_buffer.popleft()
+        count = requests.groupby('phash')['plat'].count()
+        self.request_buffer.append(count)
+        self.geo_table.loc[:, ['W_1', 'W_2']] = 0
+        for i, W in enumerate(self.request_buffer):
+            if i < 30 / self.cycle:
+                self.geo_table.loc[W.index, 'W_1'] += W.values
+            else:
+                self.geo_table.loc[W.index, 'W_2'] += W.values
+
+        self.geo_table['dayofweek'] = self.dayofweek
+        self.geo_table['hour'] = self.minofday / 60.0
+        demand = self.demand_model.predict(
+            self.geo_table[['dayofweek', 'hour', 'lat', 'lon', 'road_density', 'W_1', 'W_2']])
+        self.geo_table['W'] = demand * self.cycle / 30.0
+        return
+
+    def get_actions(self, vehicles, requests):
+        self.update_time()
         self.update_demand(requests)
 
         resource_wt = vehicles[vehicles.status=='WT']
@@ -84,12 +104,6 @@ class Agent(object):
         R = [state['R'+str(t)].values for t in range(self.T-1)]
         W = state.W.values
         status, objective, flows, carry_in, carry_out = self.LPsolve(X0, R, W, od_triptime, p_dest)
-                                                                # self.storage, T=self.T,
-                                                                # tmax=self.reposition_triptime_max,
-                                                                # cost=self.reposition_cost,
-                                                                # penalty=self.reject_penalty,
-                                                                # svv_rate=self.svv_rate,
-                                                                # saving=self.storage_saving)
         if status != 'Optimal':
             print status
             return None, state
@@ -139,24 +153,6 @@ class Agent(object):
             return actions
 
 
-    def update_demand(self, requests):
-        if len(self.request_buffer) >= 60 / self.cycle:
-            self.request_buffer.popleft()
-        count = requests.groupby('phash')['plat'].count()
-        self.request_buffer.append(count)
-        self.geo_table.loc[:, ['W_1', 'W_2']] = 0
-        for i, W in enumerate(self.request_buffer):
-            if i < 30 / self.cycle:
-                self.geo_table.loc[W.index, 'W_1'] += W.values
-            else:
-                self.geo_table.loc[W.index, 'W_2'] += W.values
-
-        self.geo_table['dayofweek'] = self.dayofweek
-        self.geo_table['hour'] = self.minofday / 60.0
-        demand = self.demand_model.predict(
-            self.geo_table[['dayofweek', 'hour', 'lat', 'lon', 'road_density', 'W_1']])
-        self.geo_table['W'] = demand * self.cycle / 60.0
-        return
 
     def find_excess(self, zone, n, resources):
         """Find n available excess vehicles

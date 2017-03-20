@@ -6,7 +6,6 @@ import Geohash
 
 TIMESTEP = 60
 GEOHASH_PRECISION = 7
-MAX_ACTION_TIME = 10
 REJECT_DISTANCE = 5000
 
 # SERVICE_REWARD = RIDE_REWARD + TRIP_REWARD * trip_time - WAIT_COST * wait_time
@@ -17,9 +16,11 @@ MIN_TRIPTIME = 1.0 # in meters
 ASSIGNMENT_SPEED = 15.0 # km/h (grand circle distance)
 
 class FleetSimulator(object):
-    def __init__(self, G, eta_model):
+    def __init__(self, G, eta_model, cycle, max_action_time=100):
         self.router = PathGenerator(G)
         self.eta_model = eta_model
+        self.cycle = cycle
+        self.max_action_time = max_action_time
 
 
     def reset(self, num_vehicles, dataset, dayofweek, minofday, storage=None):
@@ -41,11 +42,11 @@ class FleetSimulator(object):
             self.minofday -= 1440
             self.dayofweek = (self.dayofweek + 1) % 7
 
-    def step(self, minutes, actions=None):
+    def step(self, actions=None):
         """
         step forward the environment by TIMESTEP
         """
-        num_steps = int(minutes * 60.0 / TIMESTEP)
+        num_steps = int(self.cycle * 60.0 / TIMESTEP)
 
         if actions:
             self.dispatch(actions)
@@ -129,7 +130,7 @@ class FleetSimulator(object):
         X[:, 1] = self.minofday / 60.0
         X[:, 2:4] = [self.vehicles[vid].location for vid in vids]
         X[:, 4:6] = destinations
-        X[:, 6] = gh.distance_in_meters(X[:, 2], X[:, 3], X[:, 4], X[:, 5]) / 1000.0
+        X[:, 6] = gh.distance_in_meters(X[:, 2], X[:, 3], X[:, 4], X[:, 5])
         trip_times = self.eta_model.predict(X)
 
         for vid, tloc, minutes in zip(vids, destinations, trip_times):
@@ -137,7 +138,7 @@ class FleetSimulator(object):
                 vehicle = self.vehicles[vid]
                 vloc = vehicle.location
                 trajectory = self.router.generate_path(vloc, tloc, minutes*60.0/TIMESTEP)
-                eta = min(len(trajectory), MAX_ACTION_TIME)
+                eta = min(len(trajectory), self.max_action_time)
                 vehicle.route(trajectory[:eta], eta)
         return
 

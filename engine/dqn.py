@@ -5,8 +5,8 @@ import numpy as np
 import tensorflow as tf
 from collections import deque
 from keras.models import Sequential
-from keras.layers import Convolution2D, MaxPooling2D, Flatten, Dense, Merge
-
+from keras.layers import Convolution2D, MaxPooling2D, Flatten, Dense, Merge, Lambda
+from keras import backend as K
 
 KERAS_BACKEND = 'tensorflow'
 DATA_PATH = 'data/dqn'
@@ -14,17 +14,25 @@ ENV_NAME = 'test'
 FRAME_WIDTH = 31  # Resized frame width
 FRAME_HEIGHT = 32  # Resized frame height
 STATE_LENGTH = 4  # Number of most recent frames to produce the input to the network
+EXP_MA_PERIOD = 30.0
+MAX_MOVE = 3
+AUX_INPUT = 6
 GAMMA = 0.90  # Discount factor
+
 EXPLORATION_STEPS = 10000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
-INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
-FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
-INITIAL_REPLAY_SIZE = 50  # Number of steps to populate the replay memory before training starts
+# INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
+# FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
+Q_MAXIMUM = 100.0
+INITIAL_ALPHA = 0.0
+FINAL_ALPHA = 0.1
+INITIAL_BETA = 0.7
+FINAL_BETA = 0.0
+INITIAL_REPLAY_SIZE = 100  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 10000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 10000  # The frequency with which the network is saved
-
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 32
-TARGET_UPDATE_INTERVAL = 100  # The frequency with which the target network is updated
+TARGET_UPDATE_INTERVAL = 120  # The frequency with which the target network is updated
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
@@ -33,15 +41,13 @@ SAVE_SUMMARY_PATH = DATA_PATH + '/summary'
 LOAD_NETWORK = False
 TRAIN = True
 
-EXP_MA_PERIOD = 30.0
-MAX_MOVE = 3
-ACTION_UPDATE_CYCLE = 10
-INIT_COST = 1.0
-AUX_INPUT = 6
 
 class Agent(object):
-    def __init__(self, geohash_table):
+    def __init__(self, geohash_table, time_step, cycle):
         self.geo_table = geohash_table
+        self.time_step = time_step
+        self.cycle = cycle
+
         self.xy2g = [[list(self.geo_table[(self.geo_table.x==x)&(self.geo_table.y==y)].index)
                       for y in range(FRAME_HEIGHT)] for x in range(FRAME_WIDTH)]
         self.xy_table = geohash_table.groupby(['x', 'y'])['lat', 'lon'].mean()
@@ -53,8 +59,13 @@ class Agent(object):
         self.action_space = [(0, 0)] + [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)
                              if x**2+y**2 <= MAX_MOVE**2 and (x != 0 or y != 0)]
         self.num_actions = len(self.action_space)
-        self.epsilon = INITIAL_EPSILON
-        self.epsilon_step = (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORATION_STEPS
+        # self.epsilon = INITIAL_EPSILON
+        # self.epsilon_step = (FINAL_EPSILON - INITIAL_EPSILON) / EXPLORATION_STEPS
+        self.alpha = INITIAL_ALPHA
+        self.alpha_step = (FINAL_ALPHA - INITIAL_ALPHA) / EXPLORATION_STEPS
+        self.beta = INITIAL_BETA
+        self.beta_step = (FINAL_BETA - INITIAL_BETA) / EXPLORATION_STEPS
+
         self.num_iters = -INITIAL_REPLAY_SIZE
 
         # Parameters used for summary
@@ -70,11 +81,11 @@ class Agent(object):
             'minofday', 'dayofweek', 'env', 'pos', 'action', 'reward', 'next_env', 'next_pos', 'delay']
 
         # Create q network
-        self.s, self.x, self.q_values, q_network = self.build_network()
+        self.s, self.x, self.q_values, q_network = self.build_dueling_network()
         q_network_weights = q_network.trainable_weights
 
         # Create target network
-        self.st, self.xt, self.target_q_values, target_network = self.build_network()
+        self.st, self.xt, self.target_q_values, target_network = self.build_dueling_network()
         target_network_weights = target_network.trainable_weights
 
         # Define target network update operation
@@ -104,7 +115,8 @@ class Agent(object):
         self.dayofweek = dayofweek
         self.minofday = minofday
         self.geo_table['W'] = 0
-        count = requests.groupby('phash')['plat'].count()
+        minutes = (requests.second.values[-1] - requests.second.values[0]) / 60.0
+        count = requests.groupby('phash')['plat'].count() * EXP_MA_PERIOD / minutes
         self.geo_table.loc[count.index, 'W'] = count.values
         self.stage = 0
         self.start_iter = self.num_iters
@@ -113,21 +125,23 @@ class Agent(object):
         self.state_buffer = deque()
 
 
-    def update_time(self, minutes):
-        self.minofday += minutes
+    def update_time(self):
+        self.minofday += self.time_step
         if self.minofday >= 1440: # 24 hour * 60 minute
             self.minofday -= 1440
             self.dayofweek = (self.dayofweek + 1) % 7
 
 
-    def get_actions(self, minutes, vehicles, requests):
-        self.update_time(minutes)
-        self.stage = (self.stage + 1) % ACTION_UPDATE_CYCLE
+    def get_actions(self, vehicles, requests):
+        self.update_time()
+        self.stage = (self.stage + 1) % self.cycle
         env_state, resource, X = self.preprocess(vehicles, requests)
         if TRAIN:
             self.train(env_state, vehicles)
 
-        pos_index, action_index = self.e_greedy(env_state, X)
+        # pos_index, action_index = self.e_greedy(env_state, X)
+        pos_index, action_index = self.q_proportion(env_state, X)
+
         vehicle_index = []
         reward = []
         actions = []
@@ -159,12 +173,12 @@ class Agent(object):
         # update exp moving average of pickup demand
         self.geo_table['W'] *= (1 - 1 / EXP_MA_PERIOD)
         count = requests.groupby('phash')['plat'].count()
-        self.geo_table.loc[count.index, 'W'] += count.values * 1 / EXP_MA_PERIOD
+        self.geo_table.loc[count.index, 'W'] += count.values
 
         num_vehicles = len(vehicles)
         # resources to be controlled in this stage
-        resource_stage = vehicles[(vehicles.available==1)&(vehicles.id >= self.stage * num_vehicles / ACTION_UPDATE_CYCLE)
-                                  &(vehicles.id < (self.stage + 1) * num_vehicles / ACTION_UPDATE_CYCLE)]
+        resource_stage = vehicles[(vehicles.available==1)&(vehicles.id >= self.stage * num_vehicles / self.cycle)
+                                  &(vehicles.id < (self.stage + 1) * num_vehicles / self.cycle)]
         resource_wt = vehicles[vehicles.status=='WT']
         resource_mv = vehicles[vehicles.status=='MV']
 
@@ -172,7 +186,7 @@ class Agent(object):
         self.geo_table['X_stage'] = resource_stage.groupby('geohash')['available'].count().astype(int)
         self.geo_table['X_wt'] = resource_wt.groupby('geohash')['available'].count().astype(int)
         self.geo_table['X_mv'] = resource_mv.groupby('geohash')['available'].count().astype(int)
-        self.geo_table['R'] = vehicles[vehicles.eta <= ACTION_UPDATE_CYCLE].groupby('dest_geohash')['available'].count()
+        self.geo_table['R'] = vehicles[vehicles.eta <= self.cycle].groupby('dest_geohash')['available'].count()
         self.geo_table = self.geo_table.fillna(0)
 
         self.geo_table['X0'] = self.geo_table.X_wt + self.geo_table.X_mv
@@ -188,34 +202,54 @@ class Agent(object):
         return env_state, resource_stage, X_stage
 
 
-    def e_greedy(self, env_state, X):
+    # def e_greedy(self, env_state, X):
+    #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
+    #     sample_size = [X[x, y] for x, y in pos_index]
+    #     main_features = self.create_main_features(env_state, pos_index)
+    #     aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
+    #
+    #     q_actions = np.argmax(
+    #         self.q_values.eval(feed_dict={
+    #         self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
+    #         axis=1)
+    #     actions = []
+    #     for size, q_action in zip(sample_size, q_actions):
+    #         action = [q_action] * size
+    #         if TRAIN:
+    #             for i in range(size):
+    #                 if self.epsilon >= np.random.random():
+    #                     action[i] = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
+    #         actions.append(action)
+    #
+    #     # Anneal epsilon linearly over time
+    #     if TRAIN and self.num_iters >= 0 and self.num_iters < EXPLORATION_STEPS:
+    #         self.epsilon += self.epsilon_step
+    #         self.beta += self.beta_step
+    #
+    #     return pos_index, actions
+
+
+    def q_proportion(self, env_state, X):
         pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
         sample_size = [X[x, y] for x, y in pos_index]
-
-        if TRAIN and self.num_iters < INITIAL_REPLAY_SIZE:
-
-            actions = [[0 if 0.5 >= np.random.random() else np.random.randint(self.num_actions)
-                        for _ in range(size)] for size in sample_size]
-            return pos_index, actions
-
         main_features = self.create_main_features(env_state, pos_index)
         aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
 
-        q_actions = np.argmax(
-            self.q_values.eval(feed_dict={
-            self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
-            axis=1)
+        q_funcs = self.q_values.eval(feed_dict={
+                self.s: np.float32(main_features), self.x: np.float32(aux_features)})
         actions = []
-        for size, q_action in zip(sample_size, q_actions):
-            action = [q_action] * size
-            for i in range(size):
-                if self.epsilon >= np.random.random():
-                    action[i] = 0 if 0.5 >= np.random.random() else np.random.randint(self.num_actions)
+        for size, q_func in zip(sample_size, q_funcs):
+            exp_q = np.exp(np.minimum(q_func, Q_MAXIMUM) * self.alpha)
+            action = np.random.choice(np.arange(self.num_actions), size=size, p=exp_q/exp_q.sum())
+            if TRAIN:
+                for i in range(size):
+                    if self.beta >= np.random.random():
+                        action[i] = 0
             actions.append(action)
 
-        # Anneal epsilon linearly over time
-        if self.epsilon > FINAL_EPSILON:
-            self.epsilon -= self.epsilon_step
+        if TRAIN and self.num_iters >= 0 and self.num_iters < EXPLORATION_STEPS:
+            self.alpha += self.alpha_step
+            self.beta += self.beta_step
 
         return pos_index, actions
 
@@ -261,7 +295,7 @@ class Agent(object):
         vdata = vehicles.loc[state_action['vid'], ['geohash', 'reward', 'eta']]
 
         state_action['reward'] =  vdata['reward'].values.astype(np.int32) - state_action['reward']
-        state_action['delay'] =  np.round(vdata['eta'].values / ACTION_UPDATE_CYCLE).astype(np.uint8)
+        state_action['delay'] =  np.round(vdata['eta'].values / self.cycle).astype(np.uint8)
         state_action['next_pos'] = self.geo_table.loc[vdata['geohash'], ['x', 'y']].values.astype(np.uint8)
         state_action['next_env'] = env_state
         self.replay_memory.append([state_action[key] for key in self.replay_memory_keys])
@@ -275,6 +309,7 @@ class Agent(object):
             # Update target network
             if self.num_iters % TARGET_UPDATE_INTERVAL == 0:
                 self.sess.run(self.update_target_network)
+                self.write_summary()
 
             # Save network
             if self.num_iters % SAVE_INTERVAL == 0:
@@ -300,21 +335,33 @@ class Agent(object):
         for data in minibatch:
             rands = np.random.randint(len(data[3]), size=NUM_BATCH)
             aux_batch += self.create_aux_features(data[0], data[1], data[3][rands])
-            next_aux_batch += self.create_aux_features(data[0] + ACTION_UPDATE_CYCLE, data[1], data[7][rands])
+            next_aux_batch += self.create_aux_features(data[0] + self.cycle, data[1], data[7][rands])
             main_batch += self.create_main_features(data[2], data[3][rands])
             next_main_batch += self.create_main_features(data[6], data[7][rands])
             action_batch += [data[4][i] for i in rands]
             reward_batch += [data[5][i] for i in rands]
             delay_batch += [data[8][i] for i in rands]
 
-        target_q_max_batch = np.max(self.target_q_values.eval(
+        # Double DQN
+        target_q_batch = self.target_q_values.eval(
             feed_dict={
                 self.st: np.float32(next_main_batch),
                 self.xt: np.float32(next_aux_batch)
+            })
+        a_batch = np.argmax(self.q_values.eval(
+            feed_dict={
+                self.s: np.float32(next_main_batch),
+                self.x: np.float32(next_aux_batch)
             }), axis=1)
+        target_q_max_batch = target_q_batch[range(BATCH_SIZE * NUM_BATCH), a_batch]
+        # target_q_max_batch = np.max(self.target_q_values.eval(
+        #     feed_dict={
+        #         self.st: np.float32(next_main_batch),
+        #         self.xt: np.float32(next_aux_batch)
+        #     }), axis=1)
         self.total_q_max += target_q_max_batch.mean()
 
-        y_batch = np.array(reward_batch) + GAMMA ** (1 + np.array(reward_batch)) * target_q_max_batch
+        y_batch = np.array(reward_batch) + GAMMA ** (1 + np.array(delay_batch)) * target_q_max_batch
 
         p = np.random.permutation(BATCH_SIZE * NUM_BATCH)
         main_batch = np.float32(main_batch)[p]
@@ -359,6 +406,41 @@ class Agent(object):
 
         return s, x, q_values, model
 
+    def build_dueling_network(self):
+        main_model = Sequential()
+        main_model.add(Convolution2D(16, 5, 5, activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
+        main_model.add(MaxPooling2D(pool_size=(2, 2)))
+        main_model.add(Convolution2D(32, 4, 4, subsample=(2, 2), activation='relu'))
+        main_model.add(MaxPooling2D(pool_size=(2, 2)))
+        main_model.add(Flatten())
+        main_model.add(Dense(128, activation='relu'))
+
+        aux_model = Sequential()
+        aux_model.add(Dense(32, activation='relu', input_dim=AUX_INPUT))
+
+        value_model = Sequential()
+        value_model.add(Merge([main_model, aux_model], mode='concat'))
+        value_model.add(Dense(64, activation='relu'))
+        value_model.add(Dense(1))
+        value_model.add(Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
+                        output_shape=(self.num_actions,)))
+
+        advantage_model = Sequential()
+        advantage_model.add(Merge([main_model, aux_model], mode='concat'))
+        advantage_model.add(Dense(128, activation='relu'))
+        advantage_model.add(Dense(self.num_actions))
+        advantage_model.add(Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True)))
+
+        model = Sequential()
+        model.add(Merge([value_model, advantage_model], mode='sum'))
+
+        s = tf.placeholder(tf.float32, [None, STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT])
+        x = tf.placeholder(tf.float32, [None, AUX_INPUT])
+        q_values = model([s, x])
+
+        return s, x, q_values, model
+
+
     def build_training_op(self, q_network_weights):
         a = tf.placeholder(tf.int64, [None])
         y = tf.placeholder(tf.float32, [None])
@@ -380,24 +462,24 @@ class Agent(object):
 
 
     def setup_summary(self):
-        total_reward = tf.Variable(0.)
-        tf.scalar_summary(ENV_NAME + '/Total Reward', total_reward)
+        # total_reward = tf.Variable(0.)
+        # tf.scalar_summary(ENV_NAME + '/Total Reward', total_reward)
         avg_max_q = tf.Variable(0.)
         tf.scalar_summary(ENV_NAME + '/Average Max Q', avg_max_q)
         avg_loss = tf.Variable(0.)
         tf.scalar_summary(ENV_NAME + '/Average Loss', avg_loss)
-        summary_vars = [total_reward, avg_max_q, avg_loss]
+        summary_vars = [avg_max_q, avg_loss]
         summary_placeholders = [tf.placeholder(tf.float32) for _ in xrange(len(summary_vars))]
         update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in xrange(len(summary_vars))]
         summary_op = tf.merge_all_summaries()
         return summary_placeholders, update_ops, summary_op
 
-    def write_summary(self, reward):
+    def write_summary(self):
         if self.num_iters >= 0:
             duration = float(self.num_iters - self.start_iter)
             avg_q_max = self.total_q_max / duration
             avg_loss = self.total_loss / duration
-            stats = [reward, avg_q_max, avg_loss]
+            stats = [avg_q_max, avg_loss]
             for i in xrange(len(stats)):
                 self.sess.run(self.update_ops[i], feed_dict={
                     self.summary_placeholders[i]: float(stats[i])
@@ -406,8 +488,8 @@ class Agent(object):
             self.summary_writer.add_summary(summary_str, self.num_iters)
 
             # Debug
-            print('i: {0:6d} / e: {1:.5f} / REWARD: {2:.2f} / Q_MAX: {3:2.4f} / LOSS: {4:.5f}'.format(
-                self.num_iters, self.epsilon, reward, avg_q_max, avg_loss))
+            print('i: {0:6d} / alpha: {1:.5f} / Q_MAX: {2:2.4f} / LOSS: {3:.5f}'.format(
+                self.num_iters, self.alpha, avg_q_max, avg_loss))
 
         self.start_iter = self.num_iters
         self.total_q_max = 0
