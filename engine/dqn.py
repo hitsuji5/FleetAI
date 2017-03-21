@@ -24,12 +24,12 @@ EXPLORATION_STEPS = 10000  # Number of steps over which the initial value of eps
 # FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
 Q_MAXIMUM = 100.0
 INITIAL_ALPHA = 0.0
-FINAL_ALPHA = 0.1
+FINAL_ALPHA = 0.15
 INITIAL_BETA = 0.7
 FINAL_BETA = 0.0
-INITIAL_REPLAY_SIZE = 100  # Number of steps to populate the replay memory before training starts
+INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 10000  # Number of replay memory the agent uses for training
-SAVE_INTERVAL = 10000  # The frequency with which the network is saved
+SAVE_INTERVAL = 2000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 32
 TARGET_UPDATE_INTERVAL = 120  # The frequency with which the target network is updated
@@ -231,13 +231,17 @@ class Agent(object):
 
     def q_proportion(self, env_state, X):
         pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
+        actions = []
+
+        if len(pos_index) == 0:
+            return pos_index, actions
+
         sample_size = [X[x, y] for x, y in pos_index]
         main_features = self.create_main_features(env_state, pos_index)
         aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
 
         q_funcs = self.q_values.eval(feed_dict={
                 self.s: np.float32(main_features), self.x: np.float32(aux_features)})
-        actions = []
         for size, q_func in zip(sample_size, q_funcs):
             exp_q = np.exp(np.minimum(q_func, Q_MAXIMUM) * self.alpha)
             action = np.random.choice(np.arange(self.num_actions), size=size, p=exp_q/exp_q.sum())
@@ -488,8 +492,8 @@ class Agent(object):
             self.summary_writer.add_summary(summary_str, self.num_iters)
 
             # Debug
-            print('i: {0:6d} / alpha: {1:.5f} / Q_MAX: {2:2.4f} / LOSS: {3:.5f}'.format(
-                self.num_iters, self.alpha, avg_q_max, avg_loss))
+            print('i: {0:6d} / alpha: {1:.5f} / beta: {1:.5f} / Q_MAX: {2:2.4f} / LOSS: {3:.5f}'.format(
+                self.num_iters, self.alpha, self.beta, avg_q_max, avg_loss))
 
         self.start_iter = self.num_iters
         self.total_q_max = 0

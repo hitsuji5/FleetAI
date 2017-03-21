@@ -121,26 +121,53 @@ class FleetSimulator(object):
 
         return wait
 
-
     def dispatch(self, actions):
-        vids, destinations = zip(*actions)
+        cache = []
+        distances = []
+        vids, targets = zip(*actions)
+        vlocs = [self.vehicles[vid].location for vid in vids]
+        for vloc, tloc in zip(vlocs, targets):
+            p, d, s, t = self.router.map_matching_shortest_path(vloc, tloc)
+            cache.append((p, s, t))
+            distances.append(d)
+
         N = len(vids)
         X = np.zeros((N, 7))
         X[:, 0] = self.dayofweek
         X[:, 1] = self.minofday / 60.0
-        X[:, 2:4] = [self.vehicles[vid].location for vid in vids]
-        X[:, 4:6] = destinations
-        X[:, 6] = gh.distance_in_meters(X[:, 2], X[:, 3], X[:, 4], X[:, 5])
+        X[:, 2:4] = vlocs
+        X[:, 4:6] = targets
+        X[:, 6] = distances
         trip_times = self.eta_model.predict(X)
 
-        for vid, tloc, minutes in zip(vids, destinations, trip_times):
-            if minutes > MIN_TRIPTIME:
-                vehicle = self.vehicles[vid]
-                vloc = vehicle.location
-                trajectory = self.router.generate_path(vloc, tloc, minutes*60.0/TIMESTEP)
+        for i, vid in enumerate(vids):
+            if trip_times[i] > MIN_TRIPTIME:
+                p, s, t = cache[i]
+                step = distances[i] / (trip_times[i] * 60.0 / TIMESTEP)
+                trajectory = self.router.generate_path(vlocs[i], targets[i], step, p, s, t)
                 eta = min(len(trajectory), self.max_action_time)
-                vehicle.route(trajectory[:eta], eta)
+                self.vehicles[vid].route(trajectory[:eta], eta)
         return
+
+    # def dispatch(self, actions):
+    #     vids, destinations = zip(*actions)
+    #     N = len(vids)
+    #     X = np.zeros((N, 7))
+    #     X[:, 0] = self.dayofweek
+    #     X[:, 1] = self.minofday / 60.0
+    #     X[:, 2:4] = [self.vehicles[vid].location for vid in vids]
+    #     X[:, 4:6] = destinations
+    #     X[:, 6] = gh.distance_in_meters(X[:, 2], X[:, 3], X[:, 4], X[:, 5])
+    #     trip_times = self.eta_model.predict(X)
+    #
+    #     for vid, tloc, minutes in zip(vids, destinations, trip_times):
+    #         if minutes > MIN_TRIPTIME:
+    #             vehicle = self.vehicles[vid]
+    #             vloc = vehicle.location
+    #             trajectory = self.router.generate_path(vloc, tloc, minutes*60.0/TIMESTEP)
+    #             eta = min(len(trajectory), self.max_action_time)
+    #             vehicle.route(trajectory[:eta], eta)
+    #     return
 
     def carry_in(self, actions, speed=20.0, alpha=1.2):
         cost = 0

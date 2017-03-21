@@ -8,6 +8,7 @@ def run(env, agent, num_steps, average_cycle=1):
     vehicles, requests, _, _, _ = env.step()
     start = time.time()
     prev_reward = 0
+    N = len(vehicles)
     for t in xrange(num_steps):
         if agent:
             actions = agent.get_actions(vehicles, requests)
@@ -26,10 +27,10 @@ def run(env, agent, num_steps, average_cycle=1):
 
         if t > 0 and t % average_cycle == 0:
             elapsed = time.time() - start
-            W, wait, reject, R, dispatch, reward = score.loc[t-average_cycle:t,
-                                            ['requests', 'wait_time', 'reject', 'resource', 'dispatch', 'reward']].sum()
-            print("t = {:d} ({:.0f} elapsed) // REQ: {:.0f} / REJ: {:.0f} / AWT: {:.1f} / DSP: {:.1f} / RWD: {:.1f}".format(
-                int(t * env.cycle), elapsed, W, reject, wait / (W - reject), dispatch / R * average_cycle, reward
+            W, wait, reject, dispatch, reward = score.loc[t-average_cycle:t,
+                                            ['requests', 'wait_time', 'reject', 'dispatch', 'reward']].sum()
+            print("t = {:d} ({:.0f} elapsed) // REQ: {:.0f} / REJ: {:.0f} / AWT: {:.1f} / DSP: {:.2f} / RWD: {:.1f}".format(
+                int(t * env.cycle), elapsed, W, reject, wait / (W - reject), dispatch / N, reward
             ))
             start = time.time()
 

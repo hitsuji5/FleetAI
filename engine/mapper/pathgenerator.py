@@ -33,7 +33,7 @@ class PathGenerator(object):
         else:
             return path
 
-    def map_matching_shortest_path(self, origin, destination, weight='length', noise=1e-3, maxtry=20):
+    def map_matching_shortest_path(self, origin, destination, weight='length', noise=1e-3, maxtry=10):
         ptry = 0
         while 1:
             mmtry = 0
@@ -85,16 +85,18 @@ class PathGenerator(object):
         return path, distance, source, target
 
 
-    def generate_path(self, origin, destination, timestep):
+    # def generate_path(self, origin, destination, timestep):
+    def generate_path(self, origin, destination, step, path, source, target):
+
         """determine the shortest path from source to target and return locations on the path
         """
-        path, distance, source, target = self.map_matching_shortest_path(origin, destination)
+        # path, distance, source, target = self.map_matching_shortest_path(origin, destination)
         if len(path) < 3:
             return [destination]
         su, sv, sd = source
         tu, tv, td = target
         trajectory = []
-        step = distance / timestep
+        # step = distance / timestep
         ds = step
 
         # origin~
@@ -345,3 +347,23 @@ if __name__ == '__main__':
     with open('data/trajectories.json', 'wb') as f:
         json.dump(trajectories, f)
     print "Complete!"
+
+
+# class FastPathGenerator(object):
+#     def generate_path(self, origin, destination, timestep):
+#         lat, lon = origin
+#         tlat, tlon = destination
+#         distance = gh.distance_in_meters(lat, lon, tlat, tlon)
+#         bearing = gh.bearing_in_radians(lat, lon, tlat, tlon)
+#         lats = [lat]
+#         lons = [lon]
+#         ds = distance / timestep
+#         while distance > ds:
+#             lat, lon = gh.end_lat_lon(lat, lon, ds, bearing)
+#             lats.append(lat)
+#             lons.append(lon)
+#             distance -= ds
+#             ds = step
+#
+#         ds -= distance
+#         return zip(lats, lons), ds

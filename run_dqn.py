@@ -14,8 +14,8 @@ GEOHASH_TABLE_PATH = 'data/table/zones.csv'
 SCORE_PATH = 'data/results/'
 
 NUM_TRIPS = 12000000
-SAMPLE_SIZE = 50000
-NUM_EPISODES = 10  # Number of episodes the agent plays
+SAMPLE_SIZE = 300000
+NUM_EPISODES = 2  # Number of episodes the agent plays
 NUM_FLEETS = 8000
 NO_OP_STEPS = 30  # Number of "do nothing" actions to be performed by the agent at the start of an episode
 CYCLE = 1
@@ -35,7 +35,7 @@ def main():
     agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE)
 
     for episode in xrange(NUM_EPISODES):
-        skiprows = np.random.randint(NUM_TRIPS - SAMPLE_SIZE)
+        skiprows = (episode * SAMPLE_SIZE) % (NUM_TRIPS - SAMPLE_SIZE)
         trips, dayofweek, minofday, duration = load_trips(TRIP_PATH, SAMPLE_SIZE, skiprows)
         env.reset(NUM_FLEETS, trips, dayofweek, minofday)
         _, requests, _, _, _ = env.step()
