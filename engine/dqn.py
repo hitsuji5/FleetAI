@@ -22,9 +22,9 @@ GAMMA = 0.90  # Discount factor
 EXPLORATION_STEPS = 5000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
 INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
-Q_MAXIMUM = 100.0
-INITIAL_ALPHA = 0.0
-FINAL_ALPHA = 0.15
+# Q_MAXIMUM = 100.0
+# INITIAL_ALPHA = 0.0
+# FINAL_ALPHA = 0.15
 INITIAL_BETA = 0.7
 FINAL_BETA = 0.0
 INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
@@ -38,8 +38,8 @@ MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
 SAVE_NETWORK_PATH = DATA_PATH + '/saved_networks'
 SAVE_SUMMARY_PATH = DATA_PATH + '/summary'
-LOAD_NETWORK = False
-TRAIN = True
+LOAD_NETWORK = True
+TRAIN = False
 
 
 class Agent(object):
@@ -61,8 +61,8 @@ class Agent(object):
         self.num_actions = len(self.action_space)
         self.epsilon = INITIAL_EPSILON
         self.epsilon_step = (FINAL_EPSILON - INITIAL_EPSILON) / EXPLORATION_STEPS
-        self.alpha = INITIAL_ALPHA
-        self.alpha_step = (FINAL_ALPHA - INITIAL_ALPHA) / EXPLORATION_STEPS
+        # self.alpha = INITIAL_ALPHA
+        # self.alpha_step = (FINAL_ALPHA - INITIAL_ALPHA) / EXPLORATION_STEPS
         self.beta = INITIAL_BETA
         self.beta_step = (FINAL_BETA - INITIAL_BETA) / EXPLORATION_STEPS
 
@@ -233,33 +233,33 @@ class Agent(object):
         return pos_index, actions
 
 
-    def q_proportion(self, env_state, X):
-        pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-        actions = []
-
-        if len(pos_index) == 0:
-            return pos_index, actions
-
-        sample_size = [X[x, y] for x, y in pos_index]
-        main_features = self.create_main_features(env_state, pos_index)
-        aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
-
-        q_funcs = self.q_values.eval(feed_dict={
-                self.s: np.float32(main_features), self.x: np.float32(aux_features)})
-        for size, q_func in zip(sample_size, q_funcs):
-            exp_q = np.exp(np.minimum(q_func, Q_MAXIMUM) * self.alpha)
-            action = np.random.choice(np.arange(self.num_actions), size=size, p=exp_q/exp_q.sum())
-            if TRAIN:
-                for i in range(size):
-                    if self.beta >= np.random.random():
-                        action[i] = 0
-            actions.append(action)
-
-        if TRAIN and self.num_iters > 0 and self.num_iters < EXPLORATION_STEPS:
-            self.alpha += self.alpha_step
-            self.beta += self.beta_step
-
-        return pos_index, actions
+    # def q_proportion(self, env_state, X):
+    #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
+    #     actions = []
+    #
+    #     if len(pos_index) == 0:
+    #         return pos_index, actions
+    #
+    #     sample_size = [X[x, y] for x, y in pos_index]
+    #     main_features = self.create_main_features(env_state, pos_index)
+    #     aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
+    #
+    #     q_funcs = self.q_values.eval(feed_dict={
+    #             self.s: np.float32(main_features), self.x: np.float32(aux_features)})
+    #     for size, q_func in zip(sample_size, q_funcs):
+    #         exp_q = np.exp(np.minimum(q_func, Q_MAXIMUM) * self.alpha)
+    #         action = np.random.choice(np.arange(self.num_actions), size=size, p=exp_q/exp_q.sum())
+    #         if TRAIN:
+    #             for i in range(size):
+    #                 if self.beta >= np.random.random():
+    #                     action[i] = 0
+    #         actions.append(action)
+    #
+    #     if TRAIN and self.num_iters > 0 and self.num_iters < EXPLORATION_STEPS:
+    #         self.alpha += self.alpha_step
+    #         self.beta += self.beta_step
+    #
+    #     return pos_index, actions
 
 
     def select_legal_actions(self, x, y, vids, aids):
@@ -488,7 +488,7 @@ class Agent(object):
             avg_q_max = self.total_q_max / duration
             avg_loss = self.total_loss / duration
             stats = [avg_q_max, avg_loss]
-            for i in xrange(len(stats)):
+            for i in xr ange(len(stats)):
                 self.sess.run(self.update_ops[i], feed_dict={
                     self.summary_placeholders[i]: float(stats[i])
                 })
@@ -496,8 +496,8 @@ class Agent(object):
             self.summary_writer.add_summary(summary_str, self.num_iters)
 
             # Debug
-            print('i: {0:6d} / alpha: {1:.5f} / beta: {1:.5f} / Q_MAX: {2:2.4f} / LOSS: {3:.5f}'.format(
-                self.num_iters, self.alpha, self.beta, avg_q_max, avg_loss))
+            print('i: {0:6d} / epsilon: {1:.5f} / beta: {1:.5f} / Q_MAX: {2:2.4f} / LOSS: {3:.5f}'.format(
+                self.num_iters, self.epsilon, self.beta, avg_q_max, avg_loss))
 
         self.start_iter = self.num_iters
         self.total_q_max = 0

@@ -63,32 +63,4 @@ def describe(score):
     effort = float(total_idle) / (total_requests * 0.2 - total_reject)
     print("SUMMARY")
     print("TOTAL REQUESTS: {0:6d} / TOTAL REJECTS: {1:6d} / IDLE TRIP: {2:6d}".format(total_requests, total_reject, total_idle))
-    print("AVG WAIT TIME: {0:.2f} / REJECT RATE: {1:.2f} / EFFORT: {2:.2f}".format(avg_wait, reject_rate, effort))
-
-# def plot(result):
-#     index = result.index
-#
-#     plt.figure(figsize=(10, 8))
-#     # plt.subplot(311)
-#     # plt.ylabel('count')
-#     # plt.ylim([0, 100])
-#     # plt.plot(result.index, result.w_z, label='demand')
-#     # plt.plot(result.index, result.reject_z, label='reject')
-#     # plt.plot(result.index, result.u_z, label='reposition')
-#     # plt.plot(result.index, result.wp_z/reposition_cycle, label='prediction')
-#     # plt.plot(result.index, result.x_z, label='vehicle')
-#     # plt.legend()
-#     plt.subplot(211)
-#     plt.ylabel('total_count')
-#     plt.plot(index, result.requests, label='demand')
-#     plt.plot(index, result.reject, label='reject')
-#     plt.plot(index, result.dispatch, label='dispatch')
-#     plt.plot(index, result.prediction, label='prediction')
-#     plt.plot(index, result.resource, label='resource')
-#     # plt.plot(index, result.ST0, label='ST1')
-#     # plt.plot(index, result.ST1, label='ST2')
-#     plt.legend()
-#     plt.subplot(212)
-#     plt.ylabel('wait time')
-#     plt.plot(index, result.wait_time/(result.requests-result.reject))
-#     return plt
+    print("AVG WAIT TIME: {0:.2f} / REJECT RATE: {1:.3f} / EFFORT: {2:.2f}".format(avg_wait, reject_rate, effort))

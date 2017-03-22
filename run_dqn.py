@@ -56,9 +56,6 @@ def main():
     episode = 1
 
     for trips, date, dayofweek, minofday in trip_chunks:
-        # skiprows = (episode * CHUNK_SIZE) % (NUM_TRIPS - CHUNK_SIZE)
-        # trips, dayofweek, minofday, duration = load_trips(TRIP_PATH, CHUNK_SIZE, skiprows)
-
         env.reset(NUM_FLEETS, trips, dayofweek, minofday)
         _, requests, _, _, _ = env.step()
         for _ in range(NO_OP_STEPS - 1):
