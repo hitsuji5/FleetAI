@@ -28,7 +28,7 @@ class FleetSimulator(object):
         self.current_time = 0
         self.minofday = minofday
         self.dayofweek = dayofweek
-        init_locations = self.requests[['plat', 'plon']].values[:num_vehicles]
+        init_locations = self.requests[['plat', 'plon']].values[np.arange(num_vehicles) % len(self.requests)]
         self.vehicles = [Vehicle(i, init_locations[i]) for i in range(num_vehicles)]
 
         if storage:

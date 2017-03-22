@@ -1,5 +1,6 @@
 import pandas as pd
 import time
+import sys
 
 def run(env, agent, num_steps, average_cycle=1):
     score = pd.DataFrame(columns=['dayofweek', 'minofday', 'requests', 'wait_time',
@@ -9,7 +10,7 @@ def run(env, agent, num_steps, average_cycle=1):
     start = time.time()
     prev_reward = 0
     N = len(vehicles)
-    for t in xrange(num_steps):
+    for t in xrange(1, num_steps+1):
         if agent:
             actions = agent.get_actions(vehicles, requests)
         else:
@@ -21,17 +22,19 @@ def run(env, agent, num_steps, average_cycle=1):
 
         vehicles, requests, wait, reject, idle = env.step(actions)
         avg_reward = vehicles.reward.mean()
-        score.loc[t] = (env.dayofweek, env.minofday, num_requests, wait, reject, idle,
+        score.loc[t-1] = (env.dayofweek, env.minofday, num_requests, wait, reject, idle,
                           num_vehicles, dispatch, avg_reward - prev_reward)
         prev_reward = avg_reward
 
-        if t > 0 and t % average_cycle == 0:
+        if t % average_cycle == 0:
             elapsed = time.time() - start
             W, wait, reject, dispatch, reward = score.loc[t-average_cycle:t,
                                             ['requests', 'wait_time', 'reject', 'dispatch', 'reward']].sum()
             print("t = {:d} ({:.0f} elapsed) // REQ: {:.0f} / REJ: {:.0f} / AWT: {:.1f} / DSP: {:.2f} / RWD: {:.1f}".format(
                 int(t * env.cycle), elapsed, W, reject, wait / (W - reject), dispatch / N, reward
             ))
+            sys.stdout.flush()
+
             start = time.time()
 
     return score

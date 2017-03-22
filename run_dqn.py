@@ -1,11 +1,10 @@
-import numpy as np
 import pandas as pd
 import cPickle as pickle
 
 from engine.simulator import FleetSimulator
 from engine.dqn import Agent
 from experiment import run, load_trips, describe
-
+from random import shuffle
 
 GRAPH_PATH = 'data/pickle/nyc_network_graph.pkl'
 TRIP_PATH = 'data/nyc_taxi/trips_2016-05.csv'
@@ -13,14 +12,33 @@ ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
 GEOHASH_TABLE_PATH = 'data/table/zones.csv'
 SCORE_PATH = 'data/results/'
 
-NUM_TRIPS = 12000000
-SAMPLE_SIZE = 300000
-NUM_EPISODES = 2  # Number of episodes the agent plays
+NUM_TRIPS = 6000000
+DURATION = 280
 NUM_FLEETS = 8000
 NO_OP_STEPS = 30  # Number of "do nothing" actions to be performed by the agent at the start of an episode
 CYCLE = 1
 ACTION_UPDATE_CYCLE = 10
 AVERAGE_CYCLE = 30
+
+
+def load_trip_chunks(trip_path, num_trips):
+    trips, dayofweek, minofday, minutes = load_trips(trip_path, num_trips)
+    num_chunks = int(minutes / DURATION)
+    chunks = []
+    date = 1
+    for _ in range(num_chunks):
+        trips['second'] -= trips.second.values[0]
+        chunk = trips[trips.second < DURATION * 60.0]
+        chunks.append((chunk, date, dayofweek, minofday))
+        trips = trips[trips.second >= DURATION * 60.0]
+
+        minofday += DURATION
+        if minofday >= 1440: # 24 hour * 60 minute
+            minofday -= 1440
+            dayofweek = (dayofweek + 1) % 7
+            date += 1
+
+    return chunks
 
 
 def main():
@@ -33,21 +51,26 @@ def main():
 
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
     agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE)
+    trip_chunks = load_trip_chunks(TRIP_PATH, NUM_TRIPS)
+    shuffle(trip_chunks)
+    episode = 1
 
-    for episode in xrange(NUM_EPISODES):
-        skiprows = (episode * SAMPLE_SIZE) % (NUM_TRIPS - SAMPLE_SIZE)
-        trips, dayofweek, minofday, duration = load_trips(TRIP_PATH, SAMPLE_SIZE, skiprows)
+    for trips, date, dayofweek, minofday in trip_chunks:
+        # skiprows = (episode * CHUNK_SIZE) % (NUM_TRIPS - CHUNK_SIZE)
+        # trips, dayofweek, minofday, duration = load_trips(TRIP_PATH, CHUNK_SIZE, skiprows)
+
         env.reset(NUM_FLEETS, trips, dayofweek, minofday)
         _, requests, _, _, _ = env.step()
         for _ in range(NO_OP_STEPS - 1):
             _, requests_, _, _, _ = env.step()
             requests = requests.append(requests_)
         agent.reset(requests, env.dayofweek, env.minofday)
-        num_steps = duration / CYCLE - NO_OP_STEPS
+        # num_steps = duration / CYCLE - NO_OP_STEPS
+        num_steps = DURATION / CYCLE - NO_OP_STEPS
 
         print("#############################################################################")
-        print("EPISODE {0:3d} / DAYOFWEEK: {1:3d} / MINUTES: {2:5d} / STEPS: {3:4d}".format(
-            episode, env.dayofweek, env.minofday, num_steps
+        print("DATE {0:3d} / DAYOFWEEK: {1:3d} / MINUTES: {2:5d} / STEPS: {3:4d}".format(
+            date, env.dayofweek, env.minofday, num_steps
         ))
         score = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE)
         describe(score)

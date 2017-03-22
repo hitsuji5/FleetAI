@@ -19,17 +19,17 @@ MAX_MOVE = 3
 AUX_INPUT = 6
 GAMMA = 0.90  # Discount factor
 
-EXPLORATION_STEPS = 10000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
-# INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
-# FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
+EXPLORATION_STEPS = 5000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
+INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
+FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
 Q_MAXIMUM = 100.0
 INITIAL_ALPHA = 0.0
 FINAL_ALPHA = 0.15
 INITIAL_BETA = 0.7
 FINAL_BETA = 0.0
 INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
-NUM_REPLAY_MEMORY = 10000  # Number of replay memory the agent uses for training
-SAVE_INTERVAL = 2000  # The frequency with which the network is saved
+NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
+SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 32
 TARGET_UPDATE_INTERVAL = 120  # The frequency with which the target network is updated
@@ -59,8 +59,8 @@ class Agent(object):
         self.action_space = [(0, 0)] + [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)
                              if x**2+y**2 <= MAX_MOVE**2 and (x != 0 or y != 0)]
         self.num_actions = len(self.action_space)
-        # self.epsilon = INITIAL_EPSILON
-        # self.epsilon_step = (FINAL_EPSILON - INITIAL_EPSILON) / EXPLORATION_STEPS
+        self.epsilon = INITIAL_EPSILON
+        self.epsilon_step = (FINAL_EPSILON - INITIAL_EPSILON) / EXPLORATION_STEPS
         self.alpha = INITIAL_ALPHA
         self.alpha_step = (FINAL_ALPHA - INITIAL_ALPHA) / EXPLORATION_STEPS
         self.beta = INITIAL_BETA
@@ -139,8 +139,8 @@ class Agent(object):
         if TRAIN:
             self.train(env_state, vehicles)
 
-        # pos_index, action_index = self.e_greedy(env_state, X)
-        pos_index, action_index = self.q_proportion(env_state, X)
+        pos_index, action_index = self.e_greedy(env_state, X)
+        # pos_index, action_index = self.q_proportion(env_state, X)
 
         vehicle_index = []
         reward = []
@@ -202,31 +202,35 @@ class Agent(object):
         return env_state, resource_stage, X_stage
 
 
-    # def e_greedy(self, env_state, X):
-    #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-    #     sample_size = [X[x, y] for x, y in pos_index]
-    #     main_features = self.create_main_features(env_state, pos_index)
-    #     aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
-    #
-    #     q_actions = np.argmax(
-    #         self.q_values.eval(feed_dict={
-    #         self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
-    #         axis=1)
-    #     actions = []
-    #     for size, q_action in zip(sample_size, q_actions):
-    #         action = [q_action] * size
-    #         if TRAIN:
-    #             for i in range(size):
-    #                 if self.epsilon >= np.random.random():
-    #                     action[i] = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
-    #         actions.append(action)
-    #
-    #     # Anneal epsilon linearly over time
-    #     if TRAIN and self.num_iters >= 0 and self.num_iters < EXPLORATION_STEPS:
-    #         self.epsilon += self.epsilon_step
-    #         self.beta += self.beta_step
-    #
-    #     return pos_index, actions
+    def e_greedy(self, env_state, X):
+        pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
+        actions = []
+
+        if len(pos_index) == 0:
+            return pos_index, actions
+
+        sample_size = [X[x, y] for x, y in pos_index]
+        main_features = self.create_main_features(env_state, pos_index)
+        aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
+
+        q_actions = np.argmax(
+            self.q_values.eval(feed_dict={
+            self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
+            axis=1)
+        for size, q_action in zip(sample_size, q_actions):
+            action = [q_action] * size
+            if TRAIN:
+                for i in range(size):
+                    if self.epsilon >= np.random.random():
+                        action[i] = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
+            actions.append(action)
+
+        # Anneal epsilon linearly over time
+        if TRAIN and self.num_iters > 0 and self.num_iters < EXPLORATION_STEPS:
+            self.epsilon += self.epsilon_step
+            self.beta += self.beta_step
+
+        return pos_index, actions
 
 
     def q_proportion(self, env_state, X):
@@ -251,7 +255,7 @@ class Agent(object):
                         action[i] = 0
             actions.append(action)
 
-        if TRAIN and self.num_iters >= 0 and self.num_iters < EXPLORATION_STEPS:
+        if TRAIN and self.num_iters > 0 and self.num_iters < EXPLORATION_STEPS:
             self.alpha += self.alpha_step
             self.beta += self.beta_step
 
