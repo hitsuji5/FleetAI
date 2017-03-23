@@ -85,18 +85,15 @@ class PathGenerator(object):
         return path, distance, source, target
 
 
-    # def generate_path(self, origin, destination, timestep):
     def generate_path(self, origin, destination, step, path, source, target):
 
         """determine the shortest path from source to target and return locations on the path
         """
-        # path, distance, source, target = self.map_matching_shortest_path(origin, destination)
         if len(path) < 3:
             return [destination]
         su, sv, sd = source
         tu, tv, td = target
         trajectory = []
-        # step = distance / timestep
         ds = step
 
         # origin~

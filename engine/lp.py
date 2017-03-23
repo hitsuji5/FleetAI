@@ -5,13 +5,12 @@ from collections import deque
 
 GAMMA = 0.9
 ETA_ERROR = 3.0
-MAX_MOVE_TIME = 25.0
+MAX_MOVE_TIME = 20.0
 STORAGE_USE = False
 
 class Agent(object):
     def __init__(self, geohash_table, eta_table, pdest_table, demand_model,
-                 cycle, T=3, cost=1.0, penalty=20.0, svv_rate=0.8,
-                 storage=None, storage_saving=5.0):
+                 cycle, T=3, cost=1.0, penalty=20.0, svv_rate=0.8):
         self.geo_table = geohash_table
         self.demand_model = demand_model
         self.eta_table = eta_table
@@ -23,10 +22,10 @@ class Agent(object):
         self.cost = cost
         self.penalty = penalty
         self.svv_rate = svv_rate
-
-        if STORAGE_USE:
-            self.storage = storage
-            self.storage_saving = storage_saving
+        #
+        # if STORAGE_USE:
+        #     self.storage = storage
+        #     self.storage_saving = storage_saving
 
     def reset(self, requests, dayofweek, minofday):
         self.dayofweek = dayofweek
@@ -69,7 +68,6 @@ class Agent(object):
     def get_actions(self, vehicles, requests):
         self.update_time()
         self.update_demand(requests)
-
         resource_wt = vehicles[vehicles.status=='WT']
 
         # DataFrame of the number of resources by geohash
@@ -86,10 +84,10 @@ class Agent(object):
         nzones = len(taxi_zones)
 
         # Count the number of vehicles in each storage
-        if STORAGE_USE:
-            resource_st = vehicles[vehicles.status == 'ST']
-            self.storage['X'] = resource_st.groupby('sid')['available'].count().astype(int)
-            self.storage = self.storage.fillna(0)
+        # if STORAGE_USE:
+        #     resource_st = vehicles[vehicles.status == 'ST']
+        #     self.storage['X'] = resource_st.groupby('sid')['available'].count().astype(int)
+        #     self.storage = self.storage.fillna(0)
 
         # trip time prediction
         od_triptime = self.eta_table.loc[[(self.dayofweek, int(self.minofday/60), z)
@@ -103,7 +101,7 @@ class Agent(object):
         X0 = state.X.values
         R = [state['R'+str(t)].values for t in range(self.T-1)]
         W = state.W.values
-        status, objective, flows, carry_in, carry_out = self.LPsolve(X0, R, W, od_triptime, p_dest)
+        status, objective, flows = self.LPsolve(X0, R, W, od_triptime, p_dest)
         if status != 'Optimal':
             print status
             return None, state
@@ -138,19 +136,21 @@ class Agent(object):
             #     vids_ = vids
             #
             # actions += zip(vids_, zip(tlats, tlons), mps)
-        if STORAGE_USE:
-            carry_in = np.floor(carry_in).astype(int)
-            carry_out = np.floor(carry_out).astype(int)
-            ci_vlist = []
-            co_vlist = []
-            for sid, (nci, nco) in enumerate(zip(carry_in, carry_out)):
-                vids, _, _ = self.find_excess(taxi_zones[self.storage.loc[sid, 'zone']], nci, resource_wt)
-                ci_vlist += zip(vids, [sid] * nci)
-                co_vlist += list(resource_st[resource_st.sid==sid].id.values[:nco])
 
-            return actions, ci_vlist, co_vlist
-        else:
-            return actions
+        return actions
+        # if STORAGE_USE:
+        #     carry_in = np.floor(carry_in).astype(int)
+        #     carry_out = np.floor(carry_out).astype(int)
+        #     ci_vlist = []
+        #     co_vlist = []
+        #     for sid, (nci, nco) in enumerate(zip(carry_in, carry_out)):
+        #         vids, _, _ = self.find_excess(taxi_zones[self.storage.loc[sid, 'zone']], nci, resource_wt)
+        #         ci_vlist += zip(vids, [sid] * nci)
+        #         co_vlist += list(resource_st[resource_st.sid==sid].id.values[:nco])
+        #
+        #     return actions, ci_vlist, co_vlist
+        # else:
+        #     return actions
 
 
 
@@ -212,35 +212,35 @@ class Agent(object):
         z = pulp.LpVariable.dicts('z', [(t, i) for t in range(T) for i in zones], lowBound=0, cat='Continuous')
 
         # For Storage
-        if STORAGE_USE:
-            nStorage = len(self.storage)
-            saving = self.storage_saving
-        else:
-            nStorage = 0
-
-        if nStorage:
-            p_carry_out = [norm.cdf(self.cycle * (t + 1), loc=self.storage.carry_out_time.values,
-                                    scale=self.storage.carry_out_time.values/4) for t in range(T)]
-            for t in range(T - 1, 0, -1):
-                p_carry_out[t] -= p_carry_out[t - 1]
-
-            xs0 = self.storage.X.values
-            sCap = self.storage.capacity.values
-            sCost = self.storage.cost.values
-            sZones = list(self.storage.zone.values)
-            u_in = pulp.LpVariable.dicts('u_in', [(t, s) for t in range(T-1) for s in range(nStorage)], lowBound=0, cat='Continuous')
-            u_out = pulp.LpVariable.dicts('u_out', [(t, s) for t in range(T-1)  for s in range(nStorage)], lowBound=0, cat='Continuous')
-            Xs = [xs0]
-            for t in range(1, T):
-                Xs.append([pulp.lpSum([Xs[t-1][s] + u_in[(t-1, s)]] + [-u_out[(tau, s)] * p_carry_out[t-tau-1][s] for tau in range(t)])
-                                      for s in range(nStorage)])
+        # if STORAGE_USE:
+        #     nStorage = len(self.storage)
+        #     saving = self.storage_saving
+        # else:
+        #     nStorage = 0
+        #
+        # if nStorage:
+        #     p_carry_out = [norm.cdf(self.cycle * (t + 1), loc=self.storage.carry_out_time.values,
+        #                             scale=self.storage.carry_out_time.values/4) for t in range(T)]
+        #     for t in range(T - 1, 0, -1):
+        #         p_carry_out[t] -= p_carry_out[t - 1]
+        #
+        #     xs0 = self.storage.X.values
+        #     sCap = self.storage.capacity.values
+        #     sCost = self.storage.cost.values
+        #     sZones = list(self.storage.zone.values)
+        #     u_in = pulp.LpVariable.dicts('u_in', [(t, s) for t in range(T-1) for s in range(nStorage)], lowBound=0, cat='Continuous')
+        #     u_out = pulp.LpVariable.dicts('u_out', [(t, s) for t in range(T-1)  for s in range(nStorage)], lowBound=0, cat='Continuous')
+        #     Xs = [xs0]
+        #     for t in range(1, T):
+        #         Xs.append([pulp.lpSum([Xs[t-1][s] + u_in[(t-1, s)]] + [-u_out[(tau, s)] * p_carry_out[t-tau-1][s] for tau in range(t)])
+        #                               for s in range(nStorage)])
 
         model += pulp.lpSum(
             [z[(t, i)] * penalty * GAMMA ** t for i in zones for t in range(T)]
             + [u[(t, i, j)] * svv_rate * (cost + od_triptime[i, j]) * GAMMA ** t
                for i in range(N) for j in o2d[i] for t in range(T-1)]
-            + [u_in[(t, s)] * sCost[s] * GAMMA ** t for s in range(nStorage) for t in range(T-1)]
-            + [-Xs[t][s] * saving * GAMMA ** t for s in range(nStorage) for t in range(T)]
+            # + [u_in[(t, s)] * sCost[s] * GAMMA ** t for s in range(nStorage) for t in range(T-1)]
+            # + [-Xs[t][s] * saving * GAMMA ** t for s in range(nStorage) for t in range(T)]
             # + [-Xs[T-1][s] * saving * gamma ** T for s in range(nStorage)]
             # + [z[(T-1, i)] * penalty * gamma ** T for i in zones]
         )
@@ -248,9 +248,9 @@ class Agent(object):
         for i in zones:
             model += pulp.lpSum([u[(0, i, j)] for j in o2d[i]]) <= x0[i] - w[i] + z[(0, i)]
             model += z[(0, i)] >= -x0[i] + w[i]
-            for s in range(nStorage):
-                if i == sZones[s]:
-                    model += u_in[(0, s)] <= x0[i]
+            # for s in range(nStorage):
+            #     if i == sZones[s]:
+            #         model += u_in[(0, s)] <= x0[i]
 
             x_ti = x0[i]
             inflow_w = 0
@@ -262,19 +262,19 @@ class Agent(object):
                 x_ti += - w[i] + r[t-1][i] + z[(t-1, i)] - pulp.lpSum([u[(t-1, i, j)] * svv_rate for j in o2d[i]])\
                         + inflow_u - outflow_u + 0.5 * (inflow_w_prev + inflow_w)
                 if t < T - 1:
-                    for s in range(nStorage):
-                        if i == sZones[s]:
-                            x_ti += pulp.lpSum([-u_in[(t-1, s)]] + [u_out[(tau, s)] * p_carry_out[t-tau-1][s] for tau in range(t)])
-                            model += u_in[(t, s)] <= x_ti
-                            break
+                #     for s in range(nStorage):
+                #         if i == sZones[s]:
+                #             x_ti += pulp.lpSum([-u_in[(t-1, s)]] + [u_out[(tau, s)] * p_carry_out[t-tau-1][s] for tau in range(t)])
+                #             model += u_in[(t, s)] <= x_ti
+                #             break
                     model += pulp.lpSum([u[(t, i, j)] for j in o2d[i]]) <= x_ti - w[i] + z[(t, i)]
                 model += z[(t, i)] >= -x_ti + w[i]
 
-        for s in range(nStorage):
-            for t in range(T - 1):
-                model += u_out[(t, s)] <= Xs[t][s]
-            for t in range(1, T):
-                model += Xs[t][s] <= sCap[s]
+        # for s in range(nStorage):
+        #     for t in range(T - 1):
+        #         model += u_out[(t, s)] <= Xs[t][s]
+        #     for t in range(1, T):
+        #         model += Xs[t][s] <= sCap[s]
 
         model.solve()
         status = pulp.LpStatus[model.status]
@@ -284,12 +284,14 @@ class Agent(object):
             for j in o2d[i]:
                 output[i,j] = u[(0, i, j)].varValue
 
-        carry_in = np.zeros(nStorage)
-        carry_out = np.zeros(nStorage)
-        for s in range(nStorage):
-            carry_in[s] = u_in[(0, s)].varValue
-            carry_out[s] = u_out[(0, s)].varValue
-        return status, objective, output, carry_in, carry_out
+        return status, objective, output
+
+        # carry_in = np.zeros(nStorage)
+        # carry_out = np.zeros(nStorage)
+        # for s in range(nStorage):
+        #     carry_in[s] = u_in[(0, s)].varValue
+        #     carry_out[s] = u_out[(0, s)].varValue
+        # return status, objective, output, carry_in, carry_out
 
 
 

@@ -16,6 +16,11 @@ MIN_TRIPTIME = 1.0 # in meters
 ASSIGNMENT_SPEED = 15.0 # km/h (grand circle distance)
 
 class FleetSimulator(object):
+    """
+    FleetSimulator is an environment in which fleets mobility, dispatch
+    and passenger pickup / dropoff are simulated.
+    """
+
     def __init__(self, G, eta_model, cycle, max_action_time=100):
         self.router = PathGenerator(G)
         self.eta_model = eta_model
@@ -198,12 +203,6 @@ class FleetSimulator(object):
         for v in self.vehicles:
             if v.status == 'ST' or v.status == 'CI':
                 self.storage.loc[v.storage_id, 'X'] += 1
-
-    # def visualize(self):
-    #     vlocs = [v.location for v in self.vehicles]
-    #     rlocs = self.requests.values
-    #     # rlocs = [(lat, lon) for lat, lon in requests.values]
-    #     gh.visualize_states(vlocs, rlocs)
 
 
 
