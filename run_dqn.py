@@ -19,7 +19,7 @@ NO_OP_STEPS = 30  # Number of "do nothing" actions to be performed by the agent 
 CYCLE = 1
 ACTION_UPDATE_CYCLE = 10
 AVERAGE_CYCLE = 30
-NUM_EPISODES = 30
+NUM_EPISODES = 40
 
 def load_trip_chunks(trip_path, num_trips):
     trips, dayofweek, minofday, minutes = load_trips(trip_path, num_trips)

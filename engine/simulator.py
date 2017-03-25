@@ -12,6 +12,7 @@ REJECT_DISTANCE = 5000
 RIDE_REWARD = 5.0
 TRIP_REWARD = 1.0
 WAIT_COST = 0.3
+REJECT_PENALTY_RATE = 0
 MIN_TRIPTIME = 1.0 # in meters
 ASSIGNMENT_SPEED = 15.0 # km/h (grand circle distance)
 
@@ -28,7 +29,7 @@ class FleetSimulator(object):
         self.max_action_time = max_action_time
 
 
-    def reset(self, num_vehicles, dataset, dayofweek, minofday, storage=None):
+    def reset(self, num_vehicles, dataset, dayofweek, minofday):
         self.requests = dataset
         self.current_time = 0
         self.minofday = minofday
@@ -36,9 +37,9 @@ class FleetSimulator(object):
         init_locations = self.requests[['plat', 'plon']].values[np.arange(num_vehicles) % len(self.requests)]
         self.vehicles = [Vehicle(i, init_locations[i]) for i in range(num_vehicles)]
 
-        if storage:
-            self.storage = storage.copy()
-            self.storage['X'] = 0
+        # if storage:
+        #     self.storage = storage.copy()
+        #     self.storage['X'] = 0
 
     def update_time(self):
         self.current_time += TIMESTEP
@@ -71,6 +72,11 @@ class FleetSimulator(object):
             reject += len(W) - len(assignments)
             self.update_time()
 
+        reject_penalty = reject * REJECT_PENALTY_RATE
+        if reject_penalty:
+            for vehicle in self.vehicles:
+                vehicle.reward -= reject_penalty
+
         vehicles = self.get_vehicles_dataframe()
         return vehicles, requests, wait, reject, gas
 
@@ -78,7 +84,7 @@ class FleetSimulator(object):
     def get_vehicles_dataframe(self):
         vehicles = [vehicle.get_state() for vehicle in self.vehicles]
         vehicles = pd.DataFrame(vehicles, columns=['id', 'available', 'geohash', 'dest_geohash',
-                                                   'eta', 'status', 'sid', 'reward'])
+                                                   'eta', 'status', 'reward'])
         return vehicles
 
     def get_vehicles_location(self):
@@ -150,8 +156,8 @@ class FleetSimulator(object):
                 p, s, t = cache[i]
                 step = distances[i] / (trip_times[i] * 60.0 / TIMESTEP)
                 trajectory = self.router.generate_path(vlocs[i], targets[i], step, p, s, t)
-                eta = min(len(trajectory), self.max_action_time)
-                self.vehicles[vid].route(trajectory[:eta], eta)
+                eta = min(trip_times[i], self.max_action_time)
+                self.vehicles[vid].route(trajectory[:np.ceil(eta).astype(int)], eta)
         return
 
     # def dispatch(self, actions):
@@ -173,36 +179,35 @@ class FleetSimulator(object):
     #             eta = min(len(trajectory), self.max_action_time)
     #             vehicle.route(trajectory[:eta], eta)
     #     return
-
-    def carry_in(self, actions, speed=20.0, alpha=1.2):
-        cost = 0
-        self.count_storage_space()
-        for vid, sid in actions:
-            if self.storage.loc[sid, 'X'] >= self.storage.loc[sid, 'capacity']:
-                print "There is no free space in Storage %d." % sid
-            else:
-                sloc = self.storage.loc[sid, ['lat', 'lon']]
-                vehicle = self.vehicles[vid]
-                vloc = vehicle.location
-                d = gh.distance_in_meters(vloc[0], vloc[1], sloc[0], sloc[1]) * alpha
-                cost += 1 + d / (speed * 1000 / 60)
-                vehicle.carrying_in(sid, sloc)
-                self.storage.loc[sid, 'X'] += 1
-        return cost, self.storage.X.values
-
-    def carry_out(self, actions, mean_wait_time=29):
-        for vid in actions:
-            # TODO gamma distribution
-            wait_time = mean_wait_time
-            vehicle = self.vehicles[vid]
-            vehicle.carrying_out(wait_time)
-        return
-
-    def count_storage_space(self):
-        self.storage['X'] = 0
-        for v in self.vehicles:
-            if v.status == 'ST' or v.status == 'CI':
-                self.storage.loc[v.storage_id, 'X'] += 1
+    #
+    # def carry_in(self, actions, speed=20.0, alpha=1.2):
+    #     cost = 0
+    #     self.count_storage_space()
+    #     for vid, sid in actions:
+    #         if self.storage.loc[sid, 'X'] >= self.storage.loc[sid, 'capacity']:
+    #             print "There is no free space in Storage %d." % sid
+    #         else:
+    #             sloc = self.storage.loc[sid, ['lat', 'lon']]
+    #             vehicle = self.vehicles[vid]
+    #             vloc = vehicle.location
+    #             d = gh.distance_in_meters(vloc[0], vloc[1], sloc[0], sloc[1]) * alpha
+    #             cost += 1 + d / (speed * 1000 / 60)
+    #             vehicle.carrying_in(sid, sloc)
+    #             self.storage.loc[sid, 'X'] += 1
+    #     return cost, self.storage.X.values
+    #
+    # def carry_out(self, actions, mean_wait_time=29):
+    #     for vid in actions:
+    #         wait_time = mean_wait_time
+    #         vehicle = self.vehicles[vid]
+    #         vehicle.carrying_out(wait_time)
+    #     return
+    #
+    # def count_storage_space(self):
+    #     self.storage['X'] = 0
+    #     for v in self.vehicles:
+    #         if v.status == 'ST' or v.status == 'CI':
+    #             self.storage.loc[v.storage_id, 'X'] += 1
 
 
 
@@ -221,7 +226,7 @@ class Vehicle(object):
         self.location = location
         self.zone = Geohash.encode(location[0], location[1], precision=GEOHASH_PRECISION)
         self.available = True
-        self.storage_id = -1
+        # self.storage_id = -1
         self.eta = 0
 
         #Internal State
@@ -257,10 +262,10 @@ class Vehicle(object):
             elif self.status == 'MV':
                 self.status = 'WT'
             # carry-out -> waiting
-            elif self.status == 'CO':
-                self.available = True
-                self.storage_id = -1
-                self.status = 'WT'
+            # elif self.status == 'CO':
+            #     self.available = True
+            #     self.storage_id = -1
+            #     self.status = 'WT'
 
         return cost
 
@@ -286,17 +291,17 @@ class Vehicle(object):
         self.status = 'MV'
         return True
 
-    def carrying_in(self, sid, sloc):
-        self.available = False
-        self.storage_id = sid
-        self.update_location(sloc)
-        self.status = 'ST'
-        return
-
-    def carrying_out(self, wait_time):
-        self.eta = wait_time
-        self.status = 'CO'
-        return
+    # def carrying_in(self, sid, sloc):
+    #     self.available = False
+    #     self.storage_id = sid
+    #     self.update_location(sloc)
+    #     self.status = 'ST'
+    #     return
+    #
+    # def carrying_out(self, wait_time):
+    #     self.eta = wait_time
+    #     self.status = 'CO'
+    #     return
 
     def get_state(self):
         if self.trajectory:
@@ -305,7 +310,7 @@ class Vehicle(object):
         else:
             dest_zone = self.zone
         return (self.id, int(self.available), self.zone, dest_zone,
-                self.eta, self.status, self.storage_id, self.reward)
+                self.eta, self.status, self.reward)
 
     def get_location(self):
         lat, lon = self.location

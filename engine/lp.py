@@ -6,11 +6,11 @@ from collections import deque
 GAMMA = 0.9
 ETA_ERROR = 3.0
 MAX_MOVE_TIME = 20.0
-STORAGE_USE = False
+# STORAGE_USE = False
 
 class Agent(object):
     def __init__(self, geohash_table, eta_table, pdest_table, demand_model,
-                 cycle, T=3, cost=1.0, penalty=20.0, svv_rate=0.8):
+                 cycle, T=3, cost=0.0, penalty=25.0, svv_rate=1.0):
         self.geo_table = geohash_table
         self.demand_model = demand_model
         self.eta_table = eta_table

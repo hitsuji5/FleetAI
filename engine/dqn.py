@@ -27,7 +27,7 @@ FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
 # FINAL_ALPHA = 0.15
 INITIAL_BETA = 0.7 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
-INITIAL_REPLAY_SIZE = 100  # Number of steps to populate the replay memory before training starts
+INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
@@ -412,32 +412,33 @@ class Agent(object):
         return
 
 
-    def build_network(self):
-        main_model = Sequential()
-        main_model.add(Convolution2D(16, 5, 5, activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
-        main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        main_model.add(Convolution2D(32, 4, 4, subsample=(2, 2), activation='relu'))
-        main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        main_model.add(Flatten())
-        main_model.add(Dense(128, activation='relu'))
-        aux_model = Sequential()
-        aux_model.add(Dense(32, activation='relu', input_dim=AUX_INPUT))
-        model = Sequential()
-        model.add(Merge([main_model, aux_model], mode='concat'))
-        model.add(Dense(128, activation='relu'))
-        model.add(Dense(self.num_actions))
-
-        s = tf.placeholder(tf.float32, [None, STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT])
-        x = tf.placeholder(tf.float32, [None, AUX_INPUT])
-        q_values = model([s, x])
-
-        return s, x, q_values, model
+    # def build_network(self):
+    #     main_model = Sequential()
+    #     main_model.add(Convolution2D(16, 5, 5, activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
+    #     main_model.add(MaxPooling2D(pool_size=(2, 2)))
+    #     main_model.add(Convolution2D(32, 4, 4, subsample=(2, 2), activation='relu'))
+    #     main_model.add(MaxPooling2D(pool_size=(2, 2)))
+    #     main_model.add(Flatten())
+    #     main_model.add(Dense(128, activation='relu'))
+    #     aux_model = Sequential()
+    #     aux_model.add(Dense(32, activation='relu', input_dim=AUX_INPUT))
+    #     model = Sequential()
+    #     model.add(Merge([main_model, aux_model], mode='concat'))
+    #     model.add(Dense(128, activation='relu'))
+    #     model.add(Dense(self.num_actions))
+    #
+    #     s = tf.placeholder(tf.float32, [None, STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT])
+    #     x = tf.placeholder(tf.float32, [None, AUX_INPUT])
+    #     q_values = model([s, x])
+    #
+    #     return s, x, q_values, model
 
     def build_dueling_network(self):
         main_model = Sequential()
         main_model.add(Convolution2D(16, 5, 5, activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
         main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        main_model.add(Convolution2D(32, 4, 4, subsample=(2, 2), activation='relu'))
+        # main_model.add(Convolution2D(32, 4, 4, subsample=(2, 2), activation='relu'))
+        main_model.add(Convolution2D(32, 4, 4, activation='relu'))
         main_model.add(MaxPooling2D(pool_size=(2, 2)))
         main_model.add(Flatten())
         main_model.add(Dense(128, activation='relu'))
