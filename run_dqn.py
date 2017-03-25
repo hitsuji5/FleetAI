@@ -9,7 +9,7 @@ from random import shuffle
 GRAPH_PATH = 'data/pickle/nyc_network_graph.pkl'
 TRIP_PATH = 'data/nyc_taxi/trips_2016-05.csv'
 ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
-GEOHASH_TABLE_PATH = 'data/table/zones.csv'
+GEOHASH_TABLE_PATH = 'data/table/zones_granular.csv'
 SCORE_PATH = 'data/results/'
 
 NUM_TRIPS = 6000000
@@ -61,12 +61,11 @@ def main():
             _, requests_, _, _, _ = env.step()
             requests = requests.append(requests_)
         agent.reset(requests, env.dayofweek, env.minofday)
-        # num_steps = duration / CYCLE - NO_OP_STEPS
         num_steps = DURATION / CYCLE - NO_OP_STEPS
 
         print("#############################################################################")
-        print("DATE {0:3d} / DAYOFWEEK: {1:3d} / MINUTES: {2:5d} / STEPS: {3:4d}".format(
-            date, env.dayofweek, env.minofday, num_steps
+        print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d} / STEPS: {:d}".format(
+            episode, date, env.dayofweek, env.minofday, num_steps
         ))
         score = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE)
         describe(score)

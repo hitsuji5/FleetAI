@@ -12,7 +12,6 @@ REJECT_DISTANCE = 5000
 RIDE_REWARD = 5.0
 TRIP_REWARD = 1.0
 WAIT_COST = 0.3
-REJECT_PENALTY_RATE = 0
 MIN_TRIPTIME = 1.0 # in meters
 ASSIGNMENT_SPEED = 15.0 # km/h (grand circle distance)
 
@@ -72,10 +71,10 @@ class FleetSimulator(object):
             reject += len(W) - len(assignments)
             self.update_time()
 
-        reject_penalty = reject * REJECT_PENALTY_RATE
-        if reject_penalty:
-            for vehicle in self.vehicles:
-                vehicle.reward -= reject_penalty
+        # reject_penalty = reject * REJECT_PENALTY_RATE
+        # if reject_penalty:
+        #     for vehicle in self.vehicles:
+        #         vehicle.reward -= reject_penalty
 
         vehicles = self.get_vehicles_dataframe()
         return vehicles, requests, wait, reject, gas
