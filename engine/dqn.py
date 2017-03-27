@@ -141,8 +141,10 @@ class Agent(object):
         env_state, resource, X = self.preprocess(vehicles, requests)
         if self.training:
             self.run_dql(env_state, vehicles)
+            pos_index, action_index = self.e_greedy(env_state, X)
+        else:
+            pos_index, action_index = self.qmax_action(env_state, X)
 
-        pos_index, action_index = self.e_greedy(env_state, X)
         vehicle_index = []
         reward = []
         actions = []
@@ -205,12 +207,34 @@ class Agent(object):
 
     def e_greedy(self, env_state, X):
         pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-        actions = []
 
         if len(pos_index) == 0:
-            return pos_index, actions
+            return pos_index, []
 
-        sample_size = [X[x, y] for x, y in pos_index]
+        main_features = self.create_main_features(env_state, pos_index)
+        aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
+
+        if self.epsilon < 1:
+            q_actions = np.argmax(
+                self.q_values.eval(feed_dict={
+                self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
+                axis=1)
+        else:
+            q_actions = [0] * len(pos_index)
+
+        actions = [[a if self.epsilon < np.random.random() else
+                    0 if self.beta >= np.random.random() else
+                    np.random.randint(self.num_actions) for _ in range(X[x, y])]
+                   for (x, y), a in zip(pos_index, q_actions)]
+
+        return pos_index, actions
+
+
+    def qmax_action(self, env_state, X):
+        pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
+        if len(pos_index) == 0:
+            return pos_index, []
+
         main_features = self.create_main_features(env_state, pos_index)
         aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
 
@@ -218,15 +242,10 @@ class Agent(object):
             self.q_values.eval(feed_dict={
             self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
             axis=1)
-        for size, q_action in zip(sample_size, q_actions):
-            action = [q_action] * size
-            if self.training:
-                for i in range(size):
-                    if self.epsilon >= np.random.random():
-                        action[i] = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
-            actions.append(action)
+        actions = [[a] * X[x, y] for (x, y), a in zip(pos_index, q_actions)]
 
         return pos_index, actions
+
 
     # def greedy(self, env_state, resource, X):
     #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
@@ -477,11 +496,17 @@ class Agent(object):
 
     def build_network(self):
         main_model = Sequential()
-        main_model.add(Convolution2D(16, 6, 6, subsample=(3, 3), activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
-        main_model.add(Convolution2D(32, 4, 4, activation='relu'))
+        main_model.add(Convolution2D(16, 3, 3, activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
+        main_model.add(MaxPooling2D(pool_size=(3, 3)))
+        main_model.add(Convolution2D(32, 3, 3, activation='relu'))
         main_model.add(MaxPooling2D(pool_size=(2, 2)))
         main_model.add(Convolution2D(64, 3, 3, activation='relu'))
         main_model.add(MaxPooling2D(pool_size=(2, 2)))
+        # main_model.add(Convolution2D(16, 6, 6, subsample=(3, 3), activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
+        # main_model.add(Convolution2D(32, 4, 4, activation='relu'))
+        # main_model.add(MaxPooling2D(pool_size=(2, 2)))
+        # main_model.add(Convolution2D(64, 3, 3, activation='relu'))
+        # main_model.add(MaxPooling2D(pool_size=(2, 2)))
         main_model.add(Flatten())
         main_model.add(Dense(256, activation='relu'))
 
