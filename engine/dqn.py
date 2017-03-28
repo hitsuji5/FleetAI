@@ -496,17 +496,11 @@ class Agent(object):
 
     def build_network(self):
         main_model = Sequential()
-        main_model.add(Convolution2D(16, 3, 3, activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
-        main_model.add(MaxPooling2D(pool_size=(3, 3)))
-        main_model.add(Convolution2D(32, 3, 3, activation='relu'))
+        main_model.add(Convolution2D(16, 6, 6, subsample=(3, 3), activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
+        main_model.add(Convolution2D(32, 4, 4, activation='relu'))
         main_model.add(MaxPooling2D(pool_size=(2, 2)))
         main_model.add(Convolution2D(64, 3, 3, activation='relu'))
         main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        # main_model.add(Convolution2D(16, 6, 6, subsample=(3, 3), activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
-        # main_model.add(Convolution2D(32, 4, 4, activation='relu'))
-        # main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        # main_model.add(Convolution2D(64, 3, 3, activation='relu'))
-        # main_model.add(MaxPooling2D(pool_size=(2, 2)))
         main_model.add(Flatten())
         main_model.add(Dense(256, activation='relu'))
 
