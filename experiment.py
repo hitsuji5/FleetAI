@@ -8,7 +8,6 @@ def run(env, agent, num_steps, average_cycle=1):
 
     vehicles, requests, _, _, _ = env.step()
     start = time.time()
-    agent_time = 0
     prev_reward = 0
     N = len(vehicles)
     for t in xrange(1, num_steps+1):

@@ -4,19 +4,21 @@ import os
 import numpy as np
 import tensorflow as tf
 from collections import deque
-from keras.models import Sequential
-from keras.layers import Convolution2D, MaxPooling2D, Flatten, Dense, Merge, Lambda
-from keras import backend as K
+from keras.models import Model
+from keras.layers import Input, Reshape, Convolution2D, MaxPooling2D, Cropping2D, UpSampling2D, Flatten, Dense, merge
+from skimage.util import pad
 
 KERAS_BACKEND = 'tensorflow'
 DATA_PATH = 'data/dqn'
 ENV_NAME = 'test'
 FRAME_WIDTH = 71 # Frame width of heat map inputs
 FRAME_HEIGHT = 73 # Frame height of heat map inputs
-STATE_LENGTH = 4  # Number of most recent frames to produce the input to the network
+STATE_SIZE = 85
+STATE_LENGTH = 3  # Number of most recent frames to produce the input to the network
+ACTION_DIM = 15 # Frame width of heat map inputs
+MAX_MOVE = (ACTION_DIM - 1) / 2 # Maximum distance of an action
 EXP_MA_PERIOD = 30.0 # Exponential moving average period
-MAX_MOVE = 3 # Maximum distance of an action
-AUX_INPUT = 6 # Number of auxiliary inputs
+AUX_INPUT = 10 # Number of auxiliary inputs
 GAMMA = 0.90  # Discount factor
 
 EXPLORATION_STEPS = 5000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
@@ -24,13 +26,14 @@ INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
 INITIAL_BETA = 0.7 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
-INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
+INITIAL_REPLAY_SIZE = 40  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 32 # Number of batches
 SAMPLE_PER_FRAME = 4
-TARGET_UPDATE_INTERVAL = 120  # The frequency with which the target network is updated
+TARGET_UPDATE_INTERVAL = 60  # The frequency with which the target network is updated
+SUMMARY_INTERVAL = 10
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
@@ -44,6 +47,15 @@ class Agent(object):
         self.time_step = time_step
         self.cycle = cycle
         self.training = training
+        self.x_matrix = np.zeros((ACTION_DIM, ACTION_DIM))
+        self.y_matrix = np.zeros((ACTION_DIM, ACTION_DIM))
+        self.d_matrix = np.zeros((ACTION_DIM, ACTION_DIM))
+        for i in range(ACTION_DIM):
+            self.x_matrix[i, :] = i - ACTION_DIM/2
+            self.y_matrix[:, i] = i - ACTION_DIM/2
+            for j in range(ACTION_DIM):
+                self.d_matrix[i, j] = np.sqrt((i - ACTION_DIM/2)**2 + (j - ACTION_DIM/2)**2) / ACTION_DIM
+
 
         self.xy2g = [[list(self.geo_table[(self.geo_table.x==x)&(self.geo_table.y==y)].index)
                       for y in range(FRAME_HEIGHT)] for x in range(FRAME_WIDTH)]
@@ -53,18 +65,11 @@ class Agent(object):
         self.xy_table['distance'] = 0
         self.xy_table['dayofweek'] = 0
         self.xy_table['hour'] = 0
-        # self.action_space = [(0, 0)] + [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)
-        #                      if x**2+y**2 <= MAX_MOVE**2 and (x != 0 or y != 0)]
         self.action_space = [(0, 0)] + [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)
-                             if x**2+y**2 <= MAX_MOVE**2 and x**2+y**2 > 0]\
-                            + [(x, y) for x in range(-MAX_MOVE*3, MAX_MOVE*3+1, MAX_MOVE)
-                               for y in range(-MAX_MOVE*3, MAX_MOVE*3+1, MAX_MOVE)
-                               if x**2+y**2 <= (MAX_MOVE*3)**2 and x**2+y**2 > MAX_MOVE**2]
+                             if x**2+y**2 > 0]
         self.num_actions = len(self.action_space)
         self.epsilon = INITIAL_EPSILON
         self.epsilon_step = (FINAL_EPSILON - INITIAL_EPSILON) / EXPLORATION_STEPS
-        # self.alpha = INITIAL_ALPHA
-        # self.alpha_step = (FINAL_ALPHA - INITIAL_ALPHA) / EXPLORATION_STEPS
         self.beta = INITIAL_BETA
         self.beta_step = (FINAL_BETA - INITIAL_BETA) / EXPLORATION_STEPS
 
@@ -247,69 +252,6 @@ class Agent(object):
         return pos_index, actions
 
 
-    # def greedy(self, env_state, resource, X):
-    #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-    #     actions = []
-    #
-    #     if len(pos_index) == 0:
-    #         return actions
-    #
-    #     main_features = np.float32(self.create_main_features(env_state, pos_index))
-    #     aux_features = np.float32(self.create_aux_features(self.minofday, self.dayofweek, pos_index))
-    #
-    #     for i, (x, y) in enumerate(pos_index):
-    #         vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
-    #         vids = vdata['id'].values
-    #         for vid in vids:
-    #             q_action = np.argmax(
-    #                 self.q_values.eval(feed_dict={
-    #                 self.s: main_features[i:i+1], self.x: aux_features[i:i+1]})[0])
-    #             new_x, new_y = x, y
-    #             if q_action > 0:
-    #                 move_x, move_y = self.action_space[q_action]
-    #                 x_ = x + move_x
-    #                 y_ = y + move_y
-    #                 if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
-    #                     g = self.xy2g[x_][y_]
-    #                     if len(g) > 0:
-    #                         lat, lon = self.geo_table.loc[np.random.choice(g), ['lat', 'lon']].values
-    #                         actions.append((vid, (lat, lon)))
-    #                         new_x, new_y = x_, y_
-    #
-    #             main_features[i:, 1, new_x, new_y] += 1.0 / 255
-    #
-    #     return actions
-
-
-    # def q_proportion(self, env_state, X):
-    #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-    #     actions = []
-    #
-    #     if len(pos_index) == 0:
-    #         return pos_index, actions
-    #
-    #     sample_size = [X[x, y] for x, y in pos_index]
-    #     main_features = self.create_main_features(env_state, pos_index)
-    #     aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
-    #
-    #     q_funcs = self.q_values.eval(feed_dict={
-    #             self.s: np.float32(main_features), self.x: np.float32(aux_features)})
-    #     for size, q_func in zip(sample_size, q_funcs):
-    #         exp_q = np.exp(np.minimum(q_func, Q_MAXIMUM) * self.alpha)
-    #         action = np.random.choice(np.arange(self.num_actions), size=size, p=exp_q/exp_q.sum())
-    #         if self.training:
-    #             for i in range(size):
-    #                 if self.beta >= np.random.random():
-    #                     action[i] = 0
-    #         actions.append(action)
-    #
-    #     if self.training and self.num_iters > 0 and self.num_iters < EXPLORATION_STEPS:
-    #         self.alpha += self.alpha_step
-    #         self.beta += self.beta_step
-    #
-    #     return pos_index, actions
-
-
     def select_legal_actions(self, x, y, vids, aids):
         actions = []
         for vid, aid in zip(vids, aids):
@@ -326,19 +268,28 @@ class Agent(object):
 
 
     def create_main_features(self, env_state, positions):
-        def pframe(x, y):
-            pframe = np.zeros((FRAME_WIDTH, FRAME_HEIGHT))
-            pframe[x, y] = 1
-            return pframe
+        def pad_crop(F, x, y):
+            pad_F = pad(F / 255.0, STATE_SIZE/2, mode='constant', constant_values=0)
+            return pad_F[x:x+STATE_SIZE, y:y+STATE_SIZE]
 
-        features = [[s / 255.0 for s in env_state] + [pframe(x, y)] for x, y in positions]
+        features = [[pad_crop(s, x, y) for s in env_state] for x, y in positions]
         return features
 
     def create_aux_features(self, minofday, dayofweek, positions):
+        aux_features = [np.zeros((AUX_INPUT, ACTION_DIM, ACTION_DIM))] * len(positions)
         min = minofday / 1440.0
         day = (dayofweek + int(min)) / 7.0
-        time_features = [np.sin(min), np.cos(min), np.sin(day), np.cos(day)]
-        aux_features = [time_features + [2 * x / FRAME_WIDTH - 1, 2 * y / FRAME_HEIGHT - 1] for x, y in positions]
+        for i, (x, y) in enumerate(positions):
+            aux_features[i][0, :, :] = np.sin(min)
+            aux_features[i][1, :, :] = np.cos(min)
+            aux_features[i][2, :, :] = np.sin(day)
+            aux_features[i][3, :, :] = np.cos(day)
+            aux_features[i][5, :, :] = float(x) / FRAME_WIDTH
+            aux_features[i][6, :, :] = float(y) / FRAME_HEIGHT
+            aux_features[i][7, :, :] = (float(x) + self.x_matrix) / FRAME_WIDTH
+            aux_features[i][8, :, :] = (float(y) + self.y_matrix) / FRAME_HEIGHT
+            aux_features[i][9, :, :] = self.d_matrix
+
         return aux_features
 
     def run_dql(self, env_state, vehicles):
@@ -371,6 +322,8 @@ class Agent(object):
             # Update target network
             if self.num_iters % TARGET_UPDATE_INTERVAL == 0:
                 self.sess.run(self.update_target_network)
+
+            if self.num_iters % SUMMARY_INTERVAL == 0:
                 self.write_summary()
 
             # Save network
@@ -410,16 +363,6 @@ class Agent(object):
             action_batch += [data[4][i] for i in rands]
             reward_batch += [data[5][i] for i in rands]
             delay_batch += [data[8][i] for i in rands]
-        # minibatch = [self.replay_memory[i] for i in np.random.randint(len(self.replay_memory), size=BATCH_SIZE)]
-        # for data in minibatch:
-        #     rands = np.random.randint(len(data[3]), size=NUM_BATCH)
-        #     aux_batch += self.create_aux_features(data[0], data[1], data[3][rands])
-        #     next_aux_batch += self.create_aux_features(data[0] + self.cycle, data[1], data[7][rands])
-        #     main_batch += self.create_main_features(data[2], data[3][rands])
-        #     next_main_batch += self.create_main_features(data[6], data[7][rands])
-        #     action_batch += [data[4][i] for i in rands]
-        #     reward_batch += [data[5][i] for i in rands]
-        #     delay_batch += [data[8][i] for i in rands]
 
         # Double DQN
         target_q_batch = self.target_q_values.eval(
@@ -459,75 +402,66 @@ class Agent(object):
         return
 
 
-    # def build_network(self):
-    #     main_model = Sequential()
-    #     main_model.add(Convolution2D(16, 5, 5, activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
-    #     main_model.add(MaxPooling2D(pool_size=(2, 2)))
-    #     main_model.add(Convolution2D(32, 4, 4, activation='relu'))
-    #     main_model.add(MaxPooling2D(pool_size=(2, 2)))
-    #     main_model.add(Flatten())
-    #     main_model.add(Dense(128, activation='relu'))
-    #
-    #     aux_model = Sequential()
-    #     aux_model.add(Dense(32, activation='relu', input_dim=AUX_INPUT))
-    #
-    #     value_model = Sequential()
-    #     value_model.add(Merge([main_model, aux_model], mode='concat'))
-    #     value_model.add(Dense(64, activation='relu'))
-    #     value_model.add(Dense(1))
-    #     value_model.add(Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
-    #                     output_shape=(self.num_actions,)))
-    #
-    #     advantage_model = Sequential()
-    #     advantage_model.add(Merge([main_model, aux_model], mode='concat'))
-    #     advantage_model.add(Dense(128, activation='relu'))
-    #     advantage_model.add(Dense(self.num_actions))
-    #     advantage_model.add(Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True)))
-    #
-    #     model = Sequential()
-    #     model.add(Merge([value_model, advantage_model], mode='sum'))
-    #
-    #     s = tf.placeholder(tf.float32, [None, STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT])
-    #     x = tf.placeholder(tf.float32, [None, AUX_INPUT])
-    #     q_values = model([s, x])
-    #
-    #     return s, x, q_values, model
-
-
     def build_network(self):
-        main_model = Sequential()
-        main_model.add(Convolution2D(16, 6, 6, subsample=(3, 3), activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
-        main_model.add(Convolution2D(32, 4, 4, activation='relu'))
-        main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        main_model.add(Convolution2D(64, 3, 3, activation='relu'))
-        main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        main_model.add(Flatten())
-        main_model.add(Dense(256, activation='relu'))
+        # main_input = Input(shape=(STATE_LENGTH, STATE_SIZE, STATE_SIZE), name='main_input')
 
-        aux_model = Sequential()
-        aux_model.add(Dense(32, activation='relu', input_dim=AUX_INPUT))
+        # coarse_model = Sequential()
+        # coarse_model.add(main_input)
+        # coarse_model.add(Convolution2D(4, 8, 8, subsample=(4, 4), activation='relu'))
+        # coarse_model.add(Convolution2D(8, 4, 4, subsample=(2, 2), activation='relu'))
+        # coarse_model.add(Convolution2D(16, 4, 4, activation='relu'))
+        # coarse_model.add(MaxPooling2D(pool_size=(2, 2)))
+        # coarse_model.add(Flatten())
+        # coarse_model.add(Dense(ACTION_DIM * ACTION_DIM, activation='relu'))
+        # coarse_model.add(Reshape((1, ACTION_DIM, ACTION_DIM)))
+        #
+        # crop_size = (STATE_SIZE - ACTION_DIM)/2 - 2
+        # granular_model = Sequential()
+        # coarse_model.add(main_input)
+        # granular_model.add(Cropping2D(cropping=(crop_size, crop_size), data_format='channels_first'))
+        # granular_model.add(Convolution2D(8, 5, 5, activation='relu'))
+        # granular_model.add(Convolution2D(16, 3, 3, padding='same', activation='relu'))
+        # granular_model.add(Convolution2D(32, 3, 3, padding='same', activation='relu'))
+        #
+        # aux_input = Input(shape=(AUX_INPUT, ACTION_DIM, ACTION_DIM), name='main_input')
+        #
+        # model = Sequential()
+        # model.add(Merge([coarse_model, granular_model, aux_input], mode='concat'))
+        # model.add(Convolution2D(128, 1, 1, activation='relu'))
+        # model.add(Convolution2D(1, 1, 1))
+        # model.add(Flatten())
+        # s = tf.placeholder(tf.float32, [None, STATE_LENGTH, STATE_SIZE, STATE_SIZE])
+        # x = tf.placeholder(tf.float32, [None, AUX_INPUT, ACTION_DIM, ACTION_DIM])
+        # q_values = model([s, x])
 
-        value_model = Sequential()
-        value_model.add(Merge([main_model, aux_model], mode='concat'))
-        value_model.add(Dense(128, activation='relu'))
-        value_model.add(Dense(1))
-        value_model.add(Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
-                        output_shape=(self.num_actions,)))
+        # main_input = tf.placeholder(tf.float32, [None, STATE_LENGTH, STATE_SIZE, STATE_SIZE])
+        # aux_input = tf.placeholder(tf.float32, [None, AUX_INPUT, ACTION_DIM, ACTION_DIM])
 
-        advantage_model = Sequential()
-        advantage_model.add(Merge([main_model, aux_model], mode='concat'))
-        advantage_model.add(Dense(256, activation='relu'))
-        advantage_model.add(Dense(self.num_actions))
-        advantage_model.add(Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True)))
+        main_input = Input(shape=(STATE_LENGTH, STATE_SIZE, STATE_SIZE), dtype='float32')
+        aux_input = Input(shape=(AUX_INPUT, ACTION_DIM, ACTION_DIM), dtype='float32')
 
-        model = Sequential()
-        model.add(Merge([value_model, advantage_model], mode='sum'))
+        x1 = Convolution2D(4, 8, 8, subsample=(4, 4), activation='relu')(main_input)
+        x1 = Convolution2D(8, 4, 4, subsample=(2, 2), activation='relu')(x1)
+        x1 = Convolution2D(16, 4, 4, activation='relu')(x1)
+        x1 = MaxPooling2D(pool_size=(2, 2))(x1)
+        x1 = Flatten()(x1)
+        x1 = Dense(ACTION_DIM/3 * ACTION_DIM/3, activation='relu')(x1)
+        x1 = Reshape((1, ACTION_DIM/3, ACTION_DIM/3))(x1)
+        coarse_output = UpSampling2D(size=(3, 3))(x1)
 
-        s = tf.placeholder(tf.float32, [None, STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT])
-        x = tf.placeholder(tf.float32, [None, AUX_INPUT])
-        q_values = model([s, x])
+        crop_size = (STATE_SIZE - ACTION_DIM)/2 - 2
+        x2 = Cropping2D(cropping=((crop_size, crop_size),(crop_size, crop_size)))(main_input)
+        x2 = Convolution2D(4, 5, 5, activation='relu')(x2)
+        x2 = Convolution2D(8, 3, 3, border_mode='same', activation='relu')(x2)
+        granular_output = Convolution2D(8, 3, 3, border_mode='same', activation='relu')(x2)
 
-        return s, x, q_values, model
+        merged = merge([coarse_output, granular_output, aux_input], mode='concat', concat_axis=1)
+        x = Convolution2D(128, 1, 1, activation='relu')(merged)
+        x = Convolution2D(1, 1, 1)(x)
+        q_values = Flatten()(x)
+        model = Model(input=[main_input, aux_input], output=q_values)
+
+        return main_input, aux_input, q_values, model
 
 
     def build_training_op(self, q_network_weights):

@@ -12,14 +12,14 @@ ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
 GEOHASH_TABLE_PATH = 'data/table/zones_granular.csv'
 SCORE_PATH = 'data/results/'
 
-NUM_TRIPS = 6000000
-DURATION = 400
+NUM_TRIPS = 100000
+DURATION = 92
 NUM_FLEETS = 8000
 NO_OP_STEPS = 30  # Number of "do nothing" actions to be performed by the agent at the start of an episode
 CYCLE = 1
 ACTION_UPDATE_CYCLE = 10
 AVERAGE_CYCLE = 30
-NUM_EPISODES = 40
+NUM_EPISODES = 1
 
 def load_trip_chunks(trip_path, num_trips):
     trips, dayofweek, minofday, minutes = load_trips(trip_path, num_trips)
