@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from collections import deque
 from keras.models import Model
-from keras.layers import Input, Reshape, Convolution2D, MaxPooling2D, Cropping2D, UpSampling2D, Flatten, Dense, merge
+from keras.layers import Input, Reshape, Convolution2D, MaxPooling2D, AveragePooling2D, Cropping2D, UpSampling2D, Flatten, Dense, merge
 from skimage.util import pad
 
 KERAS_BACKEND = 'tensorflow'
@@ -13,26 +13,27 @@ DATA_PATH = 'data/dqn'
 ENV_NAME = 'test'
 FRAME_WIDTH = 71 # Frame width of heat map inputs
 FRAME_HEIGHT = 73 # Frame height of heat map inputs
-STATE_SIZE = 85
+STATE_SIZE = 81
 STATE_LENGTH = 3  # Number of most recent frames to produce the input to the network
 ACTION_DIM = 15 # Frame width of heat map inputs
 MAX_MOVE = (ACTION_DIM - 1) / 2 # Maximum distance of an action
+STAY_INDEX = ACTION_DIM * ACTION_DIM / 2
 EXP_MA_PERIOD = 30.0 # Exponential moving average period
 AUX_INPUT = 10 # Number of auxiliary inputs
 GAMMA = 0.90  # Discount factor
 
 EXPLORATION_STEPS = 5000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
 INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
-FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
+FINAL_EPSILON = 0.05  # Final value of epsilon in epsilon-greedy
 INITIAL_BETA = 0.7 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
-INITIAL_REPLAY_SIZE = 100  # Number of steps to populate the replay memory before training starts
-NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
+INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
+NUM_REPLAY_MEMORY = 3000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
-BATCH_SIZE = 64  # Mini batch size
-NUM_BATCH = 32 # Number of batches
-SAMPLE_PER_FRAME = 4
-TARGET_UPDATE_INTERVAL = 120  # The frequency with which the target network is updated
+BATCH_SIZE = 128  # Mini batch size
+NUM_BATCH = 4 # Number of batches
+SAMPLE_PER_FRAME = 2
+TARGET_UPDATE_INTERVAL = 60  # The frequency with which the target network is updated
 SUMMARY_INTERVAL = 30
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
@@ -65,8 +66,7 @@ class Agent(object):
         self.xy_table['distance'] = 0
         self.xy_table['dayofweek'] = 0
         self.xy_table['hour'] = 0
-        self.action_space = [(0, 0)] + [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)
-                             if x**2+y**2 > 0]
+        self.action_space = [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)]
         self.num_actions = len(self.action_space)
         self.epsilon = INITIAL_EPSILON
         self.epsilon_step = (FINAL_EPSILON - INITIAL_EPSILON) / EXPLORATION_STEPS
@@ -91,6 +91,8 @@ class Agent(object):
         # Create q network
         self.s, self.x, self.q_values, q_network = self.build_network()
         q_network_weights = q_network.trainable_weights
+        for var in q_network_weights:
+            tf.histogram_summary(var.name, var)
 
         # Create target network
         self.st, self.xt, self.target_q_values, target_network = self.build_network()
@@ -225,10 +227,10 @@ class Agent(object):
                 self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
                 axis=1)
         else:
-            q_actions = [0] * len(pos_index)
+            q_actions = [STAY_INDEX] * len(pos_index)
 
         actions = [[a if self.epsilon < np.random.random() else
-                    0 if self.beta >= np.random.random() else
+                    STAY_INDEX if self.beta >= np.random.random() else
                     np.random.randint(self.num_actions) for _ in range(X[x, y])]
                    for (x, y), a in zip(pos_index, q_actions)]
 
@@ -255,7 +257,7 @@ class Agent(object):
     def select_legal_actions(self, x, y, vids, aids):
         actions = []
         for vid, aid in zip(vids, aids):
-            if aid > 0:
+            if aid != STAY_INDEX:
                 move_x, move_y = self.action_space[aid]
                 x_ = x + move_x
                 y_ = y + move_y
@@ -316,12 +318,12 @@ class Agent(object):
             self.replay_memory_weights.popleft()
 
         if self.num_iters >= 0:
-            # Train network
-            self.train_network()
-
             # Update target network
             if self.num_iters % TARGET_UPDATE_INTERVAL == 0:
                 self.sess.run(self.update_target_network)
+
+            # Train network
+            self.train_network()
 
             if self.num_iters % SUMMARY_INTERVAL == 0:
                 self.write_summary()
@@ -348,7 +350,6 @@ class Agent(object):
         next_main_batch = []
         next_aux_batch = []
         delay_batch = []
-
         # ['minofday', 'dayofweek', 'env', 'pos', 'action', 'reward', 'next_env', 'next_pos']
         # Sample random minibatch of transition from replay memory
         weights = np.array(self.replay_memory_weights, dtype=np.float32)
@@ -379,7 +380,6 @@ class Agent(object):
         self.total_q_max += target_q_max_batch.mean()
 
         y_batch = np.array(reward_batch) + GAMMA ** (1 + np.array(delay_batch)) * target_q_max_batch
-
         p = np.random.permutation(BATCH_SIZE * NUM_BATCH)
         main_batch = np.float32(main_batch)[p]
         aux_batch = np.float32(aux_batch)[p]
@@ -398,66 +398,31 @@ class Agent(object):
             })
             total_loss += loss
         self.total_loss += total_loss / NUM_BATCH
-
         return
 
 
     def build_network(self):
-        # main_input = Input(shape=(STATE_LENGTH, STATE_SIZE, STATE_SIZE), name='main_input')
-
-        # coarse_model = Sequential()
-        # coarse_model.add(main_input)
-        # coarse_model.add(Convolution2D(4, 8, 8, subsample=(4, 4), activation='relu'))
-        # coarse_model.add(Convolution2D(8, 4, 4, subsample=(2, 2), activation='relu'))
-        # coarse_model.add(Convolution2D(16, 4, 4, activation='relu'))
-        # coarse_model.add(MaxPooling2D(pool_size=(2, 2)))
-        # coarse_model.add(Flatten())
-        # coarse_model.add(Dense(ACTION_DIM * ACTION_DIM, activation='relu'))
-        # coarse_model.add(Reshape((1, ACTION_DIM, ACTION_DIM)))
-        #
-        # crop_size = (STATE_SIZE - ACTION_DIM)/2 - 2
-        # granular_model = Sequential()
-        # coarse_model.add(main_input)
-        # granular_model.add(Cropping2D(cropping=(crop_size, crop_size), data_format='channels_first'))
-        # granular_model.add(Convolution2D(8, 5, 5, activation='relu'))
-        # granular_model.add(Convolution2D(16, 3, 3, padding='same', activation='relu'))
-        # granular_model.add(Convolution2D(32, 3, 3, padding='same', activation='relu'))
-        #
-        # aux_input = Input(shape=(AUX_INPUT, ACTION_DIM, ACTION_DIM), name='main_input')
-        #
-        # model = Sequential()
-        # model.add(Merge([coarse_model, granular_model, aux_input], mode='concat'))
-        # model.add(Convolution2D(128, 1, 1, activation='relu'))
-        # model.add(Convolution2D(1, 1, 1))
-        # model.add(Flatten())
-        # s = tf.placeholder(tf.float32, [None, STATE_LENGTH, STATE_SIZE, STATE_SIZE])
-        # x = tf.placeholder(tf.float32, [None, AUX_INPUT, ACTION_DIM, ACTION_DIM])
-        # q_values = model([s, x])
-
-        # main_input = tf.placeholder(tf.float32, [None, STATE_LENGTH, STATE_SIZE, STATE_SIZE])
-        # aux_input = tf.placeholder(tf.float32, [None, AUX_INPUT, ACTION_DIM, ACTION_DIM])
-
         main_input = Input(shape=(STATE_LENGTH, STATE_SIZE, STATE_SIZE), dtype='float32')
         aux_input = Input(shape=(AUX_INPUT, ACTION_DIM, ACTION_DIM), dtype='float32')
 
-        x1 = Convolution2D(4, 8, 8, subsample=(4, 4), activation='relu')(main_input)
-        x1 = Convolution2D(8, 4, 4, subsample=(2, 2), activation='relu')(x1)
-        x1 = Convolution2D(16, 4, 4, activation='relu')(x1)
-        x1 = MaxPooling2D(pool_size=(2, 2))(x1)
+        x1 = AveragePooling2D(pool_size=(3, 3))(main_input)
+        x1 = Convolution2D(9, 6, 6, subsample=(3, 3), activation='relu', name='coarse/conv_1')(x1)
+        x1 = Convolution2D(9, 4, 4, subsample=(2, 2), activation='relu', name='coarse/conv_2')(x1)
         x1 = Flatten()(x1)
-        x1 = Dense(ACTION_DIM/3 * ACTION_DIM/3, activation='relu')(x1)
+        x1 = Dense(ACTION_DIM/3 * ACTION_DIM/3, activation='relu', name='coarse/dense')(x1)
         x1 = Reshape((1, ACTION_DIM/3, ACTION_DIM/3))(x1)
         coarse_output = UpSampling2D(size=(3, 3))(x1)
 
         crop_size = (STATE_SIZE - ACTION_DIM)/2 - 2
         x2 = Cropping2D(cropping=((crop_size, crop_size),(crop_size, crop_size)))(main_input)
-        x2 = Convolution2D(4, 5, 5, activation='relu')(x2)
-        x2 = Convolution2D(8, 3, 3, border_mode='same', activation='relu')(x2)
-        granular_output = Convolution2D(8, 3, 3, border_mode='same', activation='relu')(x2)
+        x2 = Convolution2D(4, 5, 5, activation='relu', name='granular/conv_1')(x2)
+        x2 = Convolution2D(8, 3, 3, border_mode='same', activation='relu', name='granular/conv_2')(x2)
+        granular_output = Convolution2D(8, 3, 3, border_mode='same', activation='relu', name='granular/conv_3')(x2)
 
         merged = merge([coarse_output, granular_output, aux_input], mode='concat', concat_axis=1)
-        x = Convolution2D(128, 1, 1, activation='relu')(merged)
-        x = Convolution2D(1, 1, 1)(x)
+        x = Convolution2D(32, 1, 1, activation='relu', name='merge/conv_1')(merged)
+        x = Convolution2D(32, 1, 1, activation='relu', name='merge/conv_2')(x)
+        x = Convolution2D(1, 1, 1, name='merge/conv_3')(x)
         q_values = Flatten()(x)
         model = Model(input=[main_input, aux_input], output=q_values)
 
@@ -507,8 +472,8 @@ class Agent(object):
                 self.sess.run(self.update_ops[i], feed_dict={
                     self.summary_placeholders[i]: float(stats[i])
                 })
-            summary_str = self.sess.run(self.summary_op)
-            self.summary_writer.add_summary(summary_str, self.num_iters)
+            summary = self.sess.run(self.summary_op)
+            self.summary_writer.add_summary(summary, self.num_iters)
 
             # Debug
             print('ITER: {0:6d} / EPSILON: {1:.4f} / BETA: {2:.4f} / Q_MAX: {3:.3f} / LOSS: {4:.3f}'.format(

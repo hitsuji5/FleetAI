@@ -62,7 +62,7 @@ def describe(score):
     reject_rate = float(total_reject) / total_requests
     effort = float(total_idle) / (total_requests * 0.2 - total_reject)
     avg_time = score.agent_time.mean()
-    print("-------------------------------------- SUMMARY --------------------------------------")
+    print("----------------------------------- SUMMARY -----------------------------------")
     print("REQUESTS: {0:d} / REJECTS: {1:d} / IDLE: {2:d} / REWARD: {3:.0f}".format(
         total_requests, total_reject, total_idle, total_reward))
     print("WAIT TIME: {0:.2f} / REJECT RATE: {1:.3f} / EFFORT: {2:.2f} / TIME: {3:.2f}".format(
