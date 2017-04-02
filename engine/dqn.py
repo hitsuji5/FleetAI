@@ -28,7 +28,7 @@ FINAL_EPSILON = 0.05  # Final value of epsilon in epsilon-greedy
 INITIAL_BETA = 0.7 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
 INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
-NUM_REPLAY_MEMORY = 3000  # Number of replay memory the agent uses for training
+NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 128  # Mini batch size
 NUM_BATCH = 4 # Number of batches
@@ -249,7 +249,8 @@ class Agent(object):
             self.q_values.eval(feed_dict={
             self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
             axis=1)
-        actions = [[a] * X[x, y] for (x, y), a in zip(pos_index, q_actions)]
+        actions = [[a for _ in range(X[x, y])]
+                   for (x, y), a in zip(pos_index, q_actions)]
 
         return pos_index, actions
 
@@ -417,12 +418,13 @@ class Agent(object):
         x2 = Cropping2D(cropping=((crop_size, crop_size),(crop_size, crop_size)))(main_input)
         x2 = Convolution2D(4, 5, 5, activation='relu', name='granular/conv_1')(x2)
         x2 = Convolution2D(8, 3, 3, border_mode='same', activation='relu', name='granular/conv_2')(x2)
-        granular_output = Convolution2D(8, 3, 3, border_mode='same', activation='relu', name='granular/conv_3')(x2)
+        granular_output = Convolution2D(16, 3, 3, border_mode='same', activation='relu', name='granular/conv_3')(x2)
 
         merged = merge([coarse_output, granular_output, aux_input], mode='concat', concat_axis=1)
-        x = Convolution2D(32, 1, 1, activation='relu', name='merge/conv_1')(merged)
-        x = Convolution2D(32, 1, 1, activation='relu', name='merge/conv_2')(x)
+        x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merged)
+        x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
         x = Convolution2D(1, 1, 1, name='merge/conv_3')(x)
+
         q_values = Flatten()(x)
         model = Model(input=[main_input, aux_input], output=q_values)
 
