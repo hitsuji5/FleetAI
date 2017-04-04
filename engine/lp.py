@@ -5,7 +5,7 @@ from collections import deque
 
 GAMMA = 0.9
 ETA_ERROR = 3.0
-MAX_MOVE_TIME = 20.0
+MAX_MOVE_TIME = 25.0
 # STORAGE_USE = False
 
 class Agent(object):

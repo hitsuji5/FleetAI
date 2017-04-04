@@ -199,7 +199,7 @@ class Agent(object):
         df = self.geo_table.groupby(['x', 'y'])[['X_stage', 'X0', 'X1', 'W']].sum().reset_index()
         X_stage = df.pivot(index='x', columns='y', values='X_stage').fillna(0).astype(int).values
         X0 = df.pivot(index='x', columns='y', values='X0').fillna(0).values.astype(np.uint16)
-        X1 = df.pivot(index='x', columns='y', values='X1').fillna(0).values.astype(np.uint16)
+        X1 = df.pivot(index='x', columns='y', values='X1').fillna(0).values.astype(np.int16)
         W = df.pivot(index='x', columns='y', values='W').fillna(0).values.astype(np.uint16)
         env_state = [X0, X1, W]
 
