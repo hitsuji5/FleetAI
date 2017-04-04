@@ -2,10 +2,9 @@
 .idea/
 .ipynb_checkpoints/
 analytics/.ipynb_checkpoints/
-analytics/data/
 *.pyc
-temp/
-data/
 *.html
-engine/*.ipynb
-venv/
+/temp/
+/data/
+/*.ipynb
+/venv/

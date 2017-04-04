@@ -83,7 +83,7 @@ class FleetSimulator(object):
     def get_vehicles_dataframe(self):
         vehicles = [vehicle.get_state() for vehicle in self.vehicles]
         vehicles = pd.DataFrame(vehicles, columns=['id', 'available', 'geohash', 'dest_geohash',
-                                                   'eta', 'status', 'reward'])
+                                                   'eta', 'status', 'reward', 'lat', 'lon'])
         return vehicles
 
     def get_vehicles_location(self):
@@ -308,8 +308,9 @@ class Vehicle(object):
             dest_zone = Geohash.encode(lat, lon, precision=GEOHASH_PRECISION)
         else:
             dest_zone = self.zone
+        lat, lon = self.location
         return (self.id, int(self.available), self.zone, dest_zone,
-                self.eta, self.status, self.reward)
+                self.eta, self.status, self.reward, lat, lon)
 
     def get_location(self):
         lat, lon = self.location
