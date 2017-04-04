@@ -107,7 +107,9 @@ class Agent(object):
             return None, state
 
         # Expected number of vehicles by geohash in next period without actions
-        self.geo_table['X1'] = np.ceil(self.geo_table.X + self.geo_table.R0 - self.geo_table.W)
+        self.geo_table['X1'] = self.geo_table.X + self.geo_table.R0 - self.geo_table.W
+        self.geo_table['ratio'] = self.geo_table.X1 / self.geo_table.X1.sum()\
+                                  - self.geo_table.W / self.geo_table.W.sum()
         flows = np.floor(flows).astype(int)
         state['flow'] = flows.sum(0) - flows.sum(1)
         actions = []
@@ -159,7 +161,7 @@ class Agent(object):
         """
         vids = []
         Xi = self.geo_table[(self.geo_table.taxi_zone == zone)&
-                            (self.geo_table.X > 0)][['X', 'X1']].sort_values('X1', ascending=False)
+                            (self.geo_table.X > 0)][['X', 'ratio']].sort_values('ratio', ascending=False)
 
         for g, (X, X1) in Xi.iterrows():
             m = int(min(n, X))
@@ -178,7 +180,7 @@ class Agent(object):
         for zone, n in zip(taxi_zones, flows):
             if n < 1:
                 continue
-            Xj = self.geo_table[self.geo_table.taxi_zone == zone][['lat', 'lon', 'X1']].sort_values('X1')
+            Xj = self.geo_table[self.geo_table.taxi_zone == zone][['lat', 'lon', 'ratio']].sort_values('ratio')
             for _, (lat, lon, X1) in Xj.iterrows():
                 if X1 < 0:
                     m = int(min(n, -X1))

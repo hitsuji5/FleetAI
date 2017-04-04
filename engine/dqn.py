@@ -4,15 +4,16 @@ import os
 import numpy as np
 import tensorflow as tf
 from collections import deque
-from keras.models import Sequential
-from keras.layers import Convolution2D, MaxPooling2D, Flatten, Dense, Merge, Lambda
+from keras.models import Model
+from keras.layers import Input, Convolution2D, MaxPooling2D,\
+    Flatten, Dense, Lambda, merge
 from keras import backend as K
 
 KERAS_BACKEND = 'tensorflow'
 DATA_PATH = 'data/dqn'
-ENV_NAME = 'test'
-FRAME_WIDTH = 71 # Frame width of heat map inputs
-FRAME_HEIGHT = 73 # Frame height of heat map inputs
+ENV_NAME = 'duel'
+FRAME_WIDTH = 31 # Frame width of heat map inputs
+FRAME_HEIGHT = 32 # Frame height of heat map inputs
 STATE_LENGTH = 4  # Number of most recent frames to produce the input to the network
 EXP_MA_PERIOD = 30.0 # Exponential moving average period
 MAX_MOVE = 3 # Maximum distance of an action
@@ -28,9 +29,10 @@ INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory befo
 NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
-NUM_BATCH = 32 # Number of batches
-SAMPLE_PER_FRAME = 4
+NUM_BATCH = 8 # Number of batches
+SAMPLE_PER_FRAME = 2
 TARGET_UPDATE_INTERVAL = 120  # The frequency with which the target network is updated
+SUMMARY_INTERVAL = 30
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
@@ -53,18 +55,11 @@ class Agent(object):
         self.xy_table['distance'] = 0
         self.xy_table['dayofweek'] = 0
         self.xy_table['hour'] = 0
-        # self.action_space = [(0, 0)] + [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)
-        #                      if x**2+y**2 <= MAX_MOVE**2 and (x != 0 or y != 0)]
         self.action_space = [(0, 0)] + [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)
-                             if x**2+y**2 <= MAX_MOVE**2 and x**2+y**2 > 0]\
-                            + [(x, y) for x in range(-MAX_MOVE*3, MAX_MOVE*3+1, MAX_MOVE)
-                               for y in range(-MAX_MOVE*3, MAX_MOVE*3+1, MAX_MOVE)
-                               if x**2+y**2 <= (MAX_MOVE*3)**2 and x**2+y**2 > MAX_MOVE**2]
+                             if x**2+y**2 <= MAX_MOVE**2 and x**2+y**2 > 0]
         self.num_actions = len(self.action_space)
         self.epsilon = INITIAL_EPSILON
         self.epsilon_step = (FINAL_EPSILON - INITIAL_EPSILON) / EXPLORATION_STEPS
-        # self.alpha = INITIAL_ALPHA
-        # self.alpha_step = (FINAL_ALPHA - INITIAL_ALPHA) / EXPLORATION_STEPS
         self.beta = INITIAL_BETA
         self.beta_step = (FINAL_BETA - INITIAL_BETA) / EXPLORATION_STEPS
 
@@ -86,6 +81,9 @@ class Agent(object):
         # Create q network
         self.s, self.x, self.q_values, q_network = self.build_network()
         q_network_weights = q_network.trainable_weights
+
+        for var in q_network_weights:
+            tf.histogram_summary(var.name, var)
 
         # Create target network
         self.st, self.xt, self.target_q_values, target_network = self.build_network()
@@ -139,25 +137,24 @@ class Agent(object):
         self.update_time()
         self.stage = (self.stage + 1) % self.cycle
         env_state, resource, X = self.preprocess(vehicles, requests)
+        self.geo_table['ratio'] = self.geo_table.X1 / self.geo_table.X1.sum()\
+                                  - self.geo_table.W / self.geo_table.W.sum()
+
         if self.training:
             self.run_dql(env_state, vehicles)
             pos_index, action_index = self.e_greedy(env_state, X)
-        else:
-            pos_index, action_index = self.qmax_action(env_state, X)
 
-        vehicle_index = []
-        reward = []
-        actions = []
-        for (x, y), aids in zip(pos_index, action_index):
-            vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
-            vids = vdata['id'].values
-            assert len(aids) == len(vids)
+            vehicle_index = []
+            reward = []
+            actions = []
+            for (x, y), aids in zip(pos_index, action_index):
+                vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
+                vids = vdata['id'].values
+                reward += list(vdata['reward'].values)
+                vehicle_index += list(vids)
+                actions += self.select_legal_actions(x, y, vids, aids)
 
-            reward += list(vdata['reward'].values)
-            vehicle_index += list(vids)
-            actions += self.select_legal_actions(x, y, vids, aids)
-
-        if self.training:
+            # store the state and action in the buffer
             state_dict = {}
             state_dict['stage'] = self.stage
             state_dict['minofday'] = self.minofday
@@ -168,6 +165,10 @@ class Agent(object):
             state_dict['reward'] = np.int32(reward)
             state_dict['action'] = np.uint8([aid for aids in action_index for aid in aids])
             self.state_buffer.append(state_dict)
+
+        else:
+            # pos_index, action_index = self.qmax_action(env_state, X)
+            actions = self.frequent_update_qmax_action(env_state, resource, X)
 
         return actions
 
@@ -193,7 +194,7 @@ class Agent(object):
         self.geo_table = self.geo_table.fillna(0)
 
         self.geo_table['X0'] = self.geo_table.X_wt + self.geo_table.X_mv
-        self.geo_table['X1'] = self.geo_table.X_wt + self.geo_table.R
+        self.geo_table['X1'] = self.geo_table.X_wt + self.geo_table.R - self.geo_table.W * self.cycle / EXP_MA_PERIOD
 
         df = self.geo_table.groupby(['x', 'y'])[['X_stage', 'X0', 'X1', 'W']].sum().reset_index()
         X_stage = df.pivot(index='x', columns='y', values='X_stage').fillna(0).astype(int).values
@@ -230,86 +231,6 @@ class Agent(object):
         return pos_index, actions
 
 
-    def qmax_action(self, env_state, X):
-        pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-        if len(pos_index) == 0:
-            return pos_index, []
-
-        main_features = self.create_main_features(env_state, pos_index)
-        aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
-
-        q_actions = np.argmax(
-            self.q_values.eval(feed_dict={
-            self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
-            axis=1)
-        actions = [[a] * X[x, y] for (x, y), a in zip(pos_index, q_actions)]
-
-        return pos_index, actions
-
-
-    # def greedy(self, env_state, resource, X):
-    #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-    #     actions = []
-    #
-    #     if len(pos_index) == 0:
-    #         return actions
-    #
-    #     main_features = np.float32(self.create_main_features(env_state, pos_index))
-    #     aux_features = np.float32(self.create_aux_features(self.minofday, self.dayofweek, pos_index))
-    #
-    #     for i, (x, y) in enumerate(pos_index):
-    #         vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
-    #         vids = vdata['id'].values
-    #         for vid in vids:
-    #             q_action = np.argmax(
-    #                 self.q_values.eval(feed_dict={
-    #                 self.s: main_features[i:i+1], self.x: aux_features[i:i+1]})[0])
-    #             new_x, new_y = x, y
-    #             if q_action > 0:
-    #                 move_x, move_y = self.action_space[q_action]
-    #                 x_ = x + move_x
-    #                 y_ = y + move_y
-    #                 if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
-    #                     g = self.xy2g[x_][y_]
-    #                     if len(g) > 0:
-    #                         lat, lon = self.geo_table.loc[np.random.choice(g), ['lat', 'lon']].values
-    #                         actions.append((vid, (lat, lon)))
-    #                         new_x, new_y = x_, y_
-    #
-    #             main_features[i:, 1, new_x, new_y] += 1.0 / 255
-    #
-    #     return actions
-
-
-    # def q_proportion(self, env_state, X):
-    #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-    #     actions = []
-    #
-    #     if len(pos_index) == 0:
-    #         return pos_index, actions
-    #
-    #     sample_size = [X[x, y] for x, y in pos_index]
-    #     main_features = self.create_main_features(env_state, pos_index)
-    #     aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
-    #
-    #     q_funcs = self.q_values.eval(feed_dict={
-    #             self.s: np.float32(main_features), self.x: np.float32(aux_features)})
-    #     for size, q_func in zip(sample_size, q_funcs):
-    #         exp_q = np.exp(np.minimum(q_func, Q_MAXIMUM) * self.alpha)
-    #         action = np.random.choice(np.arange(self.num_actions), size=size, p=exp_q/exp_q.sum())
-    #         if self.training:
-    #             for i in range(size):
-    #                 if self.beta >= np.random.random():
-    #                     action[i] = 0
-    #         actions.append(action)
-    #
-    #     if self.training and self.num_iters > 0 and self.num_iters < EXPLORATION_STEPS:
-    #         self.alpha += self.alpha_step
-    #         self.beta += self.beta_step
-    #
-    #     return pos_index, actions
-
-
     def select_legal_actions(self, x, y, vids, aids):
         actions = []
         for vid, aid in zip(vids, aids):
@@ -320,8 +241,61 @@ class Agent(object):
                 if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
                     g = self.xy2g[x_][y_]
                     if len(g) > 0:
-                        lat, lon = self.geo_table.loc[np.random.choice(g), ['lat', 'lon']].values
+                        # lat, lon = self.geo_table.loc[np.random.choice(g), ['lat', 'lon']].values
+                        gmin = self.geo_table.loc[g, 'ratio'].argmin()
+                        lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
                         actions.append((vid, (lat, lon)))
+        return actions
+
+    # def qmax_action(self, env_state, X):
+    #     pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
+    #     if len(pos_index) == 0:
+    #         return pos_index, []
+    #
+    #     main_features = self.create_main_features(env_state, pos_index)
+    #     aux_features = self.create_aux_features(self.minofday, self.dayofweek, pos_index)
+    #
+    #     q_actions = np.argmax(
+    #         self.q_values.eval(feed_dict={
+    #         self.s: np.float32(main_features), self.x: np.float32(aux_features)}),
+    #         axis=1)
+    #     actions = [[a] * X[x, y] for (x, y), a in zip(pos_index, q_actions)]
+    #
+    #     return pos_index, actions
+
+
+    def frequent_update_qmax_action(self, env_state, resource, X):
+        pos_index = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
+        actions = []
+
+        if len(pos_index) == 0:
+            return actions
+
+        main_features = np.float32(self.create_main_features(env_state, pos_index))
+        aux_features = np.float32(self.create_aux_features(self.minofday, self.dayofweek, pos_index))
+
+        for i, (x, y) in enumerate(pos_index):
+            vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
+            vids = vdata['id'].values
+            for vid in vids:
+                q_action = np.argmax(
+                    self.q_values.eval(feed_dict={
+                    self.s: main_features[i:i+1], self.x: aux_features[i:i+1]})[0])
+                new_x, new_y = x, y
+                if q_action > 0:
+                    move_x, move_y = self.action_space[q_action]
+                    x_ = x + move_x
+                    y_ = y + move_y
+                    if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
+                        g = self.xy2g[x_][y_]
+                        if len(g) > 0:
+                            gmin = self.geo_table.loc[g, 'ratio'].argmin()
+                            lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
+                            actions.append((vid, (lat, lon)))
+                            new_x, new_y = x_, y_
+
+                main_features[i:, 1, new_x, new_y] += 1.0 / 255
+
         return actions
 
 
@@ -365,12 +339,14 @@ class Agent(object):
             self.replay_memory_weights.popleft()
 
         if self.num_iters >= 0:
-            # Train network
-            self.train_network()
-
             # Update target network
             if self.num_iters % TARGET_UPDATE_INTERVAL == 0:
                 self.sess.run(self.update_target_network)
+
+            # Train network
+            self.train_network()
+
+            if self.num_iters % SUMMARY_INTERVAL == 0:
                 self.write_summary()
 
             # Save network
@@ -410,16 +386,6 @@ class Agent(object):
             action_batch += [data[4][i] for i in rands]
             reward_batch += [data[5][i] for i in rands]
             delay_batch += [data[8][i] for i in rands]
-        # minibatch = [self.replay_memory[i] for i in np.random.randint(len(self.replay_memory), size=BATCH_SIZE)]
-        # for data in minibatch:
-        #     rands = np.random.randint(len(data[3]), size=NUM_BATCH)
-        #     aux_batch += self.create_aux_features(data[0], data[1], data[3][rands])
-        #     next_aux_batch += self.create_aux_features(data[0] + self.cycle, data[1], data[7][rands])
-        #     main_batch += self.create_main_features(data[2], data[3][rands])
-        #     next_main_batch += self.create_main_features(data[6], data[7][rands])
-        #     action_batch += [data[4][i] for i in rands]
-        #     reward_batch += [data[5][i] for i in rands]
-        #     delay_batch += [data[8][i] for i in rands]
 
         # Double DQN
         target_q_batch = self.target_q_values.eval(
@@ -459,6 +425,33 @@ class Agent(object):
         return
 
 
+    def build_network(self):
+        main_input = Input(shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT), dtype='float32')
+        aux_input = Input(shape=(AUX_INPUT,), dtype='float32')
+
+        x = Convolution2D(8, 5, 5, activation='relu', name='main/conv1')(main_input)
+        x = MaxPooling2D(pool_size=(2, 2), name='main/pool1')(x)
+        x = Convolution2D(8, 4, 4, activation='relu', name='main/conv2')(x)
+        x = MaxPooling2D(pool_size=(2, 2), name='main/pool2')(x)
+        x = Flatten()(x)
+        # x = tf.reshape(x, [-1, np.prod(x.get_shape()[1:].as_list())])
+        merged = merge([x, aux_input], mode='concat')
+        merged = Dense(128, activation='relu', name='main/dense')(merged)
+
+        v = Dense(64, activation='relu', name='value/dense1')(merged)
+        v = Dense(1, name='value/dense3')(v)
+        value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
+                        output_shape=(self.num_actions,), name='value/lambda')(v)
+
+        a = Dense(64, activation='relu', name='advantage/dense1')(merged)
+        a = Dense(self.num_actions, name='advantage/dense3')(a)
+        advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(a)
+
+        q_values = merge([value, advantage], mode='sum')
+        model = Model(input=[main_input, aux_input], output=q_values)
+
+        return main_input, aux_input, q_values, model
+
     # def build_network(self):
     #     main_model = Sequential()
     #     main_model.add(Convolution2D(16, 5, 5, activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
@@ -494,42 +487,6 @@ class Agent(object):
     #     return s, x, q_values, model
 
 
-    def build_network(self):
-        main_model = Sequential()
-        main_model.add(Convolution2D(16, 6, 6, subsample=(3, 3), activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
-        main_model.add(Convolution2D(32, 4, 4, activation='relu'))
-        main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        main_model.add(Convolution2D(64, 3, 3, activation='relu'))
-        main_model.add(MaxPooling2D(pool_size=(2, 2)))
-        main_model.add(Flatten())
-        main_model.add(Dense(256, activation='relu'))
-
-        aux_model = Sequential()
-        aux_model.add(Dense(32, activation='relu', input_dim=AUX_INPUT))
-
-        value_model = Sequential()
-        value_model.add(Merge([main_model, aux_model], mode='concat'))
-        value_model.add(Dense(128, activation='relu'))
-        value_model.add(Dense(1))
-        value_model.add(Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
-                        output_shape=(self.num_actions,)))
-
-        advantage_model = Sequential()
-        advantage_model.add(Merge([main_model, aux_model], mode='concat'))
-        advantage_model.add(Dense(256, activation='relu'))
-        advantage_model.add(Dense(self.num_actions))
-        advantage_model.add(Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True)))
-
-        model = Sequential()
-        model.add(Merge([value_model, advantage_model], mode='sum'))
-
-        s = tf.placeholder(tf.float32, [None, STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT])
-        x = tf.placeholder(tf.float32, [None, AUX_INPUT])
-        q_values = model([s, x])
-
-        return s, x, q_values, model
-
-
     def build_training_op(self, q_network_weights):
         a = tf.placeholder(tf.int64, [None])
         y = tf.placeholder(tf.float32, [None])
@@ -551,8 +508,6 @@ class Agent(object):
 
 
     def setup_summary(self):
-        # total_reward = tf.Variable(0.)
-        # tf.scalar_summary(ENV_NAME + '/Total Reward', total_reward)
         avg_max_q = tf.Variable(0.)
         tf.scalar_summary(ENV_NAME + '/Average Max Q', avg_max_q)
         avg_loss = tf.Variable(0.)

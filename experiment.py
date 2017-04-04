@@ -8,7 +8,6 @@ def run(env, agent, num_steps, average_cycle=1):
 
     vehicles, requests, _, _, _ = env.step()
     start = time.time()
-    agent_time = 0
     prev_reward = 0
     N = len(vehicles)
     for t in xrange(1, num_steps+1):
@@ -63,7 +62,7 @@ def describe(score):
     reject_rate = float(total_reject) / total_requests
     effort = float(total_idle) / (total_requests * 0.2 - total_reject)
     avg_time = score.agent_time.mean()
-    print("-------------------------------------- SUMMARY --------------------------------------")
+    print("----------------------------------- SUMMARY -----------------------------------")
     print("REQUESTS: {0:d} / REJECTS: {1:d} / IDLE: {2:d} / REWARD: {3:.0f}".format(
         total_requests, total_reject, total_idle, total_reward))
     print("WAIT TIME: {0:.2f} / REJECT RATE: {1:.3f} / EFFORT: {2:.2f} / TIME: {3:.2f}".format(

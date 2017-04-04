@@ -9,10 +9,10 @@ from random import shuffle
 GRAPH_PATH = 'data/pickle/nyc_network_graph.pkl'
 TRIP_PATH = 'data/nyc_taxi/trips_2016-05.csv'
 ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
-GEOHASH_TABLE_PATH = 'data/table/zones_granular.csv'
+GEOHASH_TABLE_PATH = 'data/table/zones.csv'
 SCORE_PATH = 'data/results/'
 
-NUM_TRIPS = 6000000
+NUM_TRIPS = 12000000
 DURATION = 400
 NUM_FLEETS = 8000
 NO_OP_STEPS = 30  # Number of "do nothing" actions to be performed by the agent at the start of an episode
@@ -37,7 +37,8 @@ def load_trip_chunks(trip_path, num_trips):
             minofday -= 1440
             dayofweek = (dayofweek + 1) % 7
             date += 1
-
+    shuffle(chunks)
+    chunks = chunks[:NUM_EPISODES]
     return chunks
 
 
@@ -52,9 +53,7 @@ def main():
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
     agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE)
     trip_chunks = load_trip_chunks(TRIP_PATH, NUM_TRIPS)
-    shuffle(trip_chunks)
-    episode = 0
-    for trips, date, dayofweek, minofday in trip_chunks:
+    for episode, (trips, date, dayofweek, minofday) in enumerate(trip_chunks):
         env.reset(NUM_FLEETS, trips, dayofweek, minofday)
         _, requests, _, _, _ = env.step()
         for _ in range(NO_OP_STEPS - 1):
@@ -70,9 +69,6 @@ def main():
         score = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE)
         describe(score)
         score.to_csv(SCORE_PATH + 'score_dqn' + str(episode) + '.csv')
-        episode += 1
-        if episode >= NUM_EPISODES:
-            break
 
 
 
