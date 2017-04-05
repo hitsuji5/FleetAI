@@ -27,16 +27,16 @@ MAX_LONGITUDE = -73.75
 EXPLORATION_STEPS = 5000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
 INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
-INITIAL_BETA = 0.75 # Initial value of beta in epsilon-greedy
+INITIAL_BETA = 0.70 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
-INITIAL_REPLAY_SIZE = 10  # Number of steps to populate the replay memory before training starts
+INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 8 # Number of batches
 SAMPLE_PER_FRAME = 2
-TARGET_UPDATE_INTERVAL = 60  # The frequency with which the target network is updated
-SUMMARY_INTERVAL = 3
+TARGET_UPDATE_INTERVAL = 120  # The frequency with which the target network is updated
+SUMMARY_INTERVAL = 30
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
@@ -53,12 +53,6 @@ class Agent(object):
 
         self.xy2g = [[list(self.geo_table[(self.geo_table.x==x)&(self.geo_table.y==y)].index)
                       for y in range(FRAME_HEIGHT)] for x in range(FRAME_WIDTH)]
-        # self.xy_table = geohash_table.groupby(['x', 'y'])['lat', 'lon'].mean()
-        # self.xy_table['tlat'] = 0
-        # self.xy_table['tlon'] = 0
-        # self.xy_table['distance'] = 0
-        # self.xy_table['dayofweek'] = 0
-        # self.xy_table['hour'] = 0
         self.action_space = [(0, 0)] + [(x, y) for x in range(-MAX_MOVE, MAX_MOVE+1) for y in range(-MAX_MOVE, MAX_MOVE+1)
                              if x**2+y**2 <= MAX_MOVE**2 and x**2+y**2 > 0]
         self.num_actions = len(self.action_space)
@@ -157,7 +151,6 @@ class Agent(object):
         self.geo_table['X_mv'] = resource_mv.groupby('geohash')['available'].count().astype(int)
         self.geo_table['R'] = vehicles[vehicles.eta <= self.cycle].groupby('dest_geohash')['available'].count()
         self.geo_table = self.geo_table.fillna(0)
-
         self.geo_table['X0'] = self.geo_table.X_wt + self.geo_table.X_mv
         self.geo_table['X1'] = self.geo_table.X_wt + self.geo_table.R - self.geo_table.W * self.cycle / EXP_MA_PERIOD
         self.geo_table['ratio'] = self.geo_table.X1 / self.geo_table.X1.sum()\
@@ -178,7 +171,7 @@ class Agent(object):
         self.stage = (self.stage + 1) % self.cycle
         env_state, X, resource = self.preprocess(vehicles, requests)
         if self.training:
-            self.run_deep_qlearning(env_state, vehicles)
+            self.run_qlearning(env_state, vehicles)
 
         positions = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
         if len(positions) == 0:
@@ -303,7 +296,7 @@ class Agent(object):
         feature = np.array(time_feature + [normalized_lat, normalized_lon])
         return feature
 
-    def run_deep_qlearning(self, env_state, vehicles):
+    def run_qlearning(self, env_state, vehicles):
         # Store transition in replay memory
 
         if not len(self.state_buffer) or self.state_buffer[0]['stage'] != self.stage:

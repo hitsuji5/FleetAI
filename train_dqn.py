@@ -12,7 +12,7 @@ ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
 GEOHASH_TABLE_PATH = 'data/table/zones.csv'
 SCORE_PATH = 'data/results/'
 
-NUM_TRIPS = 120000
+NUM_TRIPS = 12000000
 DURATION = 400
 NUM_FLEETS = 8000
 NO_OP_STEPS = 30  # Number of "do nothing" actions to be performed by the agent at the start of an episode
