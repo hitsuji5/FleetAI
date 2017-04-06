@@ -29,14 +29,14 @@ INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
 INITIAL_BETA = 0.70 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
-INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
+INITIAL_REPLAY_SIZE = 300  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 8 # Number of batches
 SAMPLE_PER_FRAME = 2
-TARGET_UPDATE_INTERVAL = 30  # The frequency with which the target network is updated
-SUMMARY_INTERVAL = 30
+TARGET_UPDATE_INTERVAL = 10  # The frequency with which the target network is updated
+SUMMARY_INTERVAL = 10
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
@@ -169,7 +169,8 @@ class Agent(object):
         self.geo_table['X'] = self.geo_table.X_wt + self.geo_table.X_mv
         self.geo_table['X_bar'] = self.geo_table.X_wt + self.geo_table.R
         X_pred = self.geo_table['X_bar'] - self.geo_table.W * self.cycle / EXP_MA_PERIOD
-        self.geo_table['ratio'] = X_pred / X_pred.sum() - self.geo_table.W / self.geo_table.W.sum()
+        self.Xpred_sum = X_pred.sum()
+        self.geo_table['ratio'] = X_pred / self.Xpred_sum - self.geo_table.W / self.geo_table.W.sum()
 
         df = self.geo_table.groupby(['x', 'y'])[['X_idle', 'X', 'X_bar', 'W', 'W_instant']].sum().reset_index()
         X_idle = df.pivot(index='x', columns='y', values='X_idle').fillna(0).values.astype(np.uint16)
@@ -228,6 +229,11 @@ class Agent(object):
                             actions.append((vid, (lat, lon)))
                             Xbar[x_, y_] += 1
                             Xbar[x, y] -= 1
+
+                            # Update demand supply ratio
+                            vg = vdata.loc[vid, 'geohash']
+                            self.geo_table.loc[vg, 'ratio'] -= 1.0 / self.Xpred_sum
+                            self.geo_table.loc[gmin, 'ratio'] += 1.0 / self.Xpred_sum
                 Xidle[x, y] -= 1
 
         # store the state and action in the buffer
@@ -278,6 +284,11 @@ class Agent(object):
                             actions.append((vid, (lat, lon)))
                             Xbar[x_, y_] += 1
                             Xbar[x, y] -= 1
+
+                            # Update demand supply ratio
+                            vg = vdata.loc[vid, 'geohash']
+                            self.geo_table.loc[vg, 'ratio'] -= 1.0 / self.Xpred_sum
+                            self.geo_table.loc[gmin, 'ratio'] += 1.0 / self.Xpred_sum
                 Xidle[x, y] -= 1
 
         return actions
