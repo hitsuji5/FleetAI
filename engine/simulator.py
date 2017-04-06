@@ -36,10 +36,6 @@ class FleetSimulator(object):
         init_locations = self.requests[['plat', 'plon']].values[np.arange(num_vehicles) % len(self.requests)]
         self.vehicles = [Vehicle(i, init_locations[i]) for i in range(num_vehicles)]
 
-        # if storage:
-        #     self.storage = storage.copy()
-        #     self.storage['X'] = 0
-
     def update_time(self):
         self.current_time += TIMESTEP
         self.minofday += int(TIMESTEP / 60.0)
@@ -71,11 +67,6 @@ class FleetSimulator(object):
             reject += len(W) - len(assignments)
             self.update_time()
 
-        # reject_penalty = reject * REJECT_PENALTY_RATE
-        # if reject_penalty:
-        #     for vehicle in self.vehicles:
-        #         vehicle.reward -= reject_penalty
-
         vehicles = self.get_vehicles_dataframe()
         return vehicles, requests, wait, reject, gas
 
@@ -83,7 +74,7 @@ class FleetSimulator(object):
     def get_vehicles_dataframe(self):
         vehicles = [vehicle.get_state() for vehicle in self.vehicles]
         vehicles = pd.DataFrame(vehicles, columns=['id', 'available', 'geohash', 'dest_geohash',
-                                                   'eta', 'status', 'reward', 'lat', 'lon'])
+                                                   'eta', 'status', 'reward', 'lat', 'lon', 'idle'])
         return vehicles
 
     def get_vehicles_location(self):
@@ -159,56 +150,6 @@ class FleetSimulator(object):
                 self.vehicles[vid].route(trajectory[:np.ceil(eta).astype(int)], eta)
         return
 
-    # def dispatch(self, actions):
-    #     vids, destinations = zip(*actions)
-    #     N = len(vids)
-    #     X = np.zeros((N, 7))
-    #     X[:, 0] = self.dayofweek
-    #     X[:, 1] = self.minofday / 60.0
-    #     X[:, 2:4] = [self.vehicles[vid].location for vid in vids]
-    #     X[:, 4:6] = destinations
-    #     X[:, 6] = gh.distance_in_meters(X[:, 2], X[:, 3], X[:, 4], X[:, 5])
-    #     trip_times = self.eta_model.predict(X)
-    #
-    #     for vid, tloc, minutes in zip(vids, destinations, trip_times):
-    #         if minutes > MIN_TRIPTIME:
-    #             vehicle = self.vehicles[vid]
-    #             vloc = vehicle.location
-    #             trajectory = self.router.generate_path(vloc, tloc, minutes*60.0/TIMESTEP)
-    #             eta = min(len(trajectory), self.max_action_time)
-    #             vehicle.route(trajectory[:eta], eta)
-    #     return
-    #
-    # def carry_in(self, actions, speed=20.0, alpha=1.2):
-    #     cost = 0
-    #     self.count_storage_space()
-    #     for vid, sid in actions:
-    #         if self.storage.loc[sid, 'X'] >= self.storage.loc[sid, 'capacity']:
-    #             print "There is no free space in Storage %d." % sid
-    #         else:
-    #             sloc = self.storage.loc[sid, ['lat', 'lon']]
-    #             vehicle = self.vehicles[vid]
-    #             vloc = vehicle.location
-    #             d = gh.distance_in_meters(vloc[0], vloc[1], sloc[0], sloc[1]) * alpha
-    #             cost += 1 + d / (speed * 1000 / 60)
-    #             vehicle.carrying_in(sid, sloc)
-    #             self.storage.loc[sid, 'X'] += 1
-    #     return cost, self.storage.X.values
-    #
-    # def carry_out(self, actions, mean_wait_time=29):
-    #     for vid in actions:
-    #         wait_time = mean_wait_time
-    #         vehicle = self.vehicles[vid]
-    #         vehicle.carrying_out(wait_time)
-    #     return
-    #
-    # def count_storage_space(self):
-    #     self.storage['X'] = 0
-    #     for v in self.vehicles:
-    #         if v.status == 'ST' or v.status == 'CI':
-    #             self.storage.loc[v.storage_id, 'X'] += 1
-
-
 
 class Vehicle(object):
     """
@@ -225,11 +166,11 @@ class Vehicle(object):
         self.location = location
         self.zone = Geohash.encode(location[0], location[1], precision=GEOHASH_PRECISION)
         self.available = True
-        # self.storage_id = -1
-        self.eta = 0
-
-        #Internal State
         self.trajectory = []
+        self.eta = 0
+        self.idle = 0
+        self.total_idle = 0
+        self.total_service = 0
         self.reward = 0
 
     def update_location(self, location):
@@ -239,14 +180,13 @@ class Vehicle(object):
 
     def transition(self):
         cost = 0
-        # stored
-        if self.status == 'ST':
-            return cost
-        # moving / serving / carry-in / carry-out
+        if self.status != 'SV':
+            self.idle += TIMESTEP/60.0
+
         if self.eta > 0:
             time = min(TIMESTEP/60.0, self.eta)
             self.eta -= time
-            # moving / carry-in
+            # moving
             if self.trajectory:
                 self.update_location(self.trajectory.pop(0))
                 cost = time
@@ -260,11 +200,6 @@ class Vehicle(object):
             # moving -> waiting
             elif self.status == 'MV':
                 self.status = 'WT'
-            # carry-out -> waiting
-            # elif self.status == 'CO':
-            #     self.available = True
-            #     self.storage_id = -1
-            #     self.status = 'WT'
 
         return cost
 
@@ -274,8 +209,10 @@ class Vehicle(object):
             return False
         self.available = False
         self.update_location(destination)
-
+        self.total_idle += self.idle + wait_time
+        self.idle = 0
         self.eta = wait_time + trip_time
+        self.total_service += trip_time
         self.reward += RIDE_REWARD + TRIP_REWARD * trip_time - WAIT_COST * wait_time
         self.trajectory = []
         self.status = 'SV'
@@ -290,17 +227,6 @@ class Vehicle(object):
         self.status = 'MV'
         return True
 
-    # def carrying_in(self, sid, sloc):
-    #     self.available = False
-    #     self.storage_id = sid
-    #     self.update_location(sloc)
-    #     self.status = 'ST'
-    #     return
-    #
-    # def carrying_out(self, wait_time):
-    #     self.eta = wait_time
-    #     self.status = 'CO'
-    #     return
 
     def get_state(self):
         if self.trajectory:
@@ -310,7 +236,7 @@ class Vehicle(object):
             dest_zone = self.zone
         lat, lon = self.location
         return (self.id, int(self.available), self.zone, dest_zone,
-                self.eta, self.status, self.reward, lat, lon)
+                self.eta, self.status, self.reward, lat, lon, self.idle)
 
     def get_location(self):
         lat, lon = self.location

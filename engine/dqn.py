@@ -14,7 +14,7 @@ DATA_PATH = 'data/dqn'
 ENV_NAME = 'duel'
 FRAME_WIDTH = 31 # Frame width of heat map inputs
 FRAME_HEIGHT = 32 # Frame height of heat map inputs
-STATE_LENGTH = 4  # Number of most recent frames to produce the input to the network
+STATE_LENGTH = 6  # Number of most recent frames to produce the input to the network
 EXP_MA_PERIOD = 30.0 # Exponential moving average period
 MAX_MOVE = 3 # Maximum distance of an action
 AUX_INPUT = 6 # Number of auxiliary inputs
@@ -74,7 +74,7 @@ class Agent(object):
         self.replay_memory = deque()
         self.replay_memory_weights = deque()
         self.replay_memory_keys = [
-            'minofday', 'dayofweek', 'latlon', 'env', 'pos', 'action',
+            'minofday', 'dayofweek', 'latlon', 'env', 'resource', 'pos', 'action',
             'reward', 'next_latlon', 'next_env', 'next_pos', 'delay']
 
         # Create q network
@@ -119,11 +119,24 @@ class Agent(object):
         minutes = (requests.second.values[-1] - requests.second.values[0]) / 60.0
         count = requests.groupby('phash')['plat'].count() * EXP_MA_PERIOD / minutes
         self.geo_table.loc[count.index, 'W'] = count.values
+        self.geo_table['W_instant'] = self.geo_table['W'] / EXP_MA_PERIOD
         self.stage = 0
         self.start_iter = self.num_iters
         self.total_q_max = 0
         self.total_loss = 0
         self.state_buffer = deque()
+
+    def get_actions(self, vehicles, requests):
+        self.update_time()
+        env_state, resource = self.preprocess(vehicles, requests)
+
+        if self.training:
+            self.run_qlearning(env_state, vehicles)
+            actions = self.e_greedy(env_state, resource)
+        else:
+            actions = self.qmax_action(env_state, resource)
+
+        return actions
 
 
     def update_time(self):
@@ -132,67 +145,56 @@ class Agent(object):
             self.minofday -= 1440
             self.dayofweek = (self.dayofweek + 1) % 7
 
+
     def preprocess(self, vehicles, requests):
         # update exp moving average of pickup demand
-        self.geo_table['W'] *= (1 - 1 / EXP_MA_PERIOD)
-        count = requests.groupby('phash')['plat'].count()
-        self.geo_table.loc[count.index, 'W'] += count.values
+        # count = requests.groupby('phash')['plat'].count()
+        # self.geo_table.loc[count.index, 'W'] += count.values
+        self.geo_table['W_instant'] = requests.groupby('phash')['plat'].count()
+        self.geo_table = self.geo_table.fillna(0)
+        self.geo_table['W'] = (1 - 1 / EXP_MA_PERIOD) * self.geo_table['W'] + self.geo_table['W_instant']
 
-        num_vehicles = len(vehicles)
+        # num_vehicles = len(vehicles)
         # resources to be controlled in this stage
-        resource_stage = vehicles[(vehicles.available==1)&(vehicles.id >= self.stage * num_vehicles / self.cycle)
-                                  &(vehicles.id < (self.stage + 1) * num_vehicles / self.cycle)]
+        resource_idle = vehicles[(vehicles.available==1)&(vehicles.idle%self.cycle==0)]
         resource_wt = vehicles[vehicles.status=='WT']
         resource_mv = vehicles[vehicles.status=='MV']
 
         # DataFrame of the number of resources by geohash
-        self.geo_table['X_stage'] = resource_stage.groupby('geohash')['available'].count().astype(int)
+        self.geo_table['X_idle'] = resource_idle.groupby('geohash')['available'].count().astype(int)
         self.geo_table['X_wt'] = resource_wt.groupby('geohash')['available'].count().astype(int)
         self.geo_table['X_mv'] = resource_mv.groupby('geohash')['available'].count().astype(int)
         self.geo_table['R'] = vehicles[vehicles.eta <= self.cycle].groupby('dest_geohash')['available'].count()
         self.geo_table = self.geo_table.fillna(0)
-        self.geo_table['X0'] = self.geo_table.X_wt + self.geo_table.X_mv
-        self.geo_table['X1'] = self.geo_table.X_wt + self.geo_table.R - self.geo_table.W * self.cycle / EXP_MA_PERIOD
-        self.geo_table['ratio'] = self.geo_table.X1 / self.geo_table.X1.sum()\
-                                  - self.geo_table.W / self.geo_table.W.sum()
+        self.geo_table['X'] = self.geo_table.X_wt + self.geo_table.X_mv
+        self.geo_table['X_bar'] = self.geo_table.X_wt + self.geo_table.R
+        X_pred = self.geo_table['X_bar'] - self.geo_table.W * self.cycle / EXP_MA_PERIOD
+        self.geo_table['ratio'] = X_pred / X_pred.sum() - self.geo_table.W / self.geo_table.W.sum()
 
-        df = self.geo_table.groupby(['x', 'y'])[['X_stage', 'X0', 'X1', 'W']].sum().reset_index()
-        X_stage = df.pivot(index='x', columns='y', values='X_stage').fillna(0).values.astype(int)
-        X0 = df.pivot(index='x', columns='y', values='X0').fillna(0).values.astype(np.uint16)
-        X1 = df.pivot(index='x', columns='y', values='X1').fillna(0).values.astype(np.int16)
+        df = self.geo_table.groupby(['x', 'y'])[['X_idle', 'X', 'X_bar', 'W', 'W_instant']].sum().reset_index()
+        X_idle = df.pivot(index='x', columns='y', values='X_idle').fillna(0).values.astype(np.uint16)
+        X = df.pivot(index='x', columns='y', values='X').fillna(0).values.astype(np.uint16)
+        X_bar = df.pivot(index='x', columns='y', values='X_bar').fillna(0).values.astype(np.uint16)
         W = df.pivot(index='x', columns='y', values='W').fillna(0).values.astype(np.uint16)
-        env_state = [W, X0, X1]
+        W_instant = df.pivot(index='x', columns='y', values='W_instant').fillna(0).values.astype(np.uint8)
+        env_state = [W, W_instant, X, X_bar, X_idle]
 
-        return env_state, X_stage, resource_stage
-
-
-    def get_actions(self, vehicles, requests):
-        self.update_time()
-        self.stage = (self.stage + 1) % self.cycle
-        env_state, X, resource = self.preprocess(vehicles, requests)
-        if self.training:
-            self.run_qlearning(env_state, vehicles)
-
-        positions = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if X[x, y] > 0]
-        if len(positions) == 0:
-            actions = []
-        elif self.training:
-            actions = self.e_greedy(env_state, resource, positions)
-        else:
-            actions = self.qmax_action(env_state, resource, positions)
-
-        return actions
+        return env_state, resource_idle
 
 
-    def e_greedy(self, env_state, resource, positions):
-        W, X, X_pred = env_state
-        # X_pred0 = X_pred.copy()
+    def e_greedy(self, env_state, resource):
+        W, Winstant, X, Xbar, Xidle = env_state
         actions = []
+
+        positions = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if Xidle[x, y] > 0]
+        if len(positions) == 0:
+            return actions
+
         vehicle_memory = []
         action_memory = []
         reward_memory = []
         latlon_memory = []
-
+        resource_memory = []
         time_feature = self.create_time_feature(self.minofday, self.dayofweek)
         for i, (x, y) in enumerate(positions):
             vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
@@ -204,7 +206,7 @@ class Agent(object):
             for vid in vids:
                 if self.epsilon < np.random.random():
                     latlon = vdata.loc[vid, ['lat', 'lon']]
-                    main_feature = np.array([self.create_main_feature([W, X, X_pred], (x, y))])
+                    main_feature = np.array([self.create_main_feature(env_state, (x, y))])
                     aux_feature = np.array([self.create_aux_feature(time_feature, latlon)])
                     aid = np.argmax(self.q_values.eval(feed_dict={
                         self.s: main_feature, self.x: aux_feature})[0])
@@ -212,6 +214,7 @@ class Agent(object):
                     aid = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
 
                 action_memory.append(aid)
+                resource_memory.append([Xbar.copy(), Xidle.copy()])
 
                 if aid > 0:
                     move_x, move_y = self.action_space[aid]
@@ -223,16 +226,17 @@ class Agent(object):
                             gmin = self.geo_table.loc[g, 'ratio'].argmin()
                             lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
                             actions.append((vid, (lat, lon)))
-                            X_pred[x_, y_] += 1
-                            X_pred[x, y] -= 1
+                            Xbar[x_, y_] += 1
+                            Xbar[x, y] -= 1
+                Xidle[x, y] -= 1
 
         # store the state and action in the buffer
         state_dict = {}
-        state_dict['stage'] = self.stage
         state_dict['minofday'] = self.minofday
         state_dict['dayofweek'] = self.dayofweek
         state_dict['vid'] = vehicle_memory
-        state_dict['env'] = [W, X, X_pred]
+        state_dict['env'] = [W, Winstant, X]
+        state_dict['resource'] = resource_memory
         state_dict['pos'] = np.uint8([[x, y] for x, y in positions for _ in range(X[x, y])])
         state_dict['latlon'] = np.float32(latlon_memory)
         state_dict['reward'] = np.float32(reward_memory)
@@ -242,9 +246,14 @@ class Agent(object):
         return actions
 
 
-    def qmax_action(self, env_state, resource, positions):
-        W, X, X_pred = env_state
+    def qmax_action(self, env_state, resource):
+        W, Winstant, X, Xbar, Xidle = env_state
         actions = []
+
+        positions = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if Xidle[x, y] > 0]
+        if len(positions) == 0:
+            return actions
+
         time_feature = self.create_time_feature(self.minofday, self.dayofweek)
         for i, (x, y) in enumerate(positions):
             vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
@@ -252,7 +261,7 @@ class Agent(object):
 
             for vid in vids:
                 latlon = vdata.loc[vid, ['lat', 'lon']]
-                main_feature = np.array([self.create_main_feature([W, X, X_pred], (x, y))])
+                main_feature = np.array([self.create_main_feature(env_state, (x, y))])
                 aux_feature = np.array([self.create_aux_feature(time_feature, latlon)])
                 aid = np.argmax(self.q_values.eval(feed_dict={
                     self.s: main_feature, self.x: aux_feature})[0])
@@ -267,8 +276,9 @@ class Agent(object):
                             gmin = self.geo_table.loc[g, 'ratio'].argmin()
                             lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
                             actions.append((vid, (lat, lon)))
-                            X_pred[x_, y_] += 1
-                            X_pred[x, y] -= 1
+                            Xbar[x_, y_] += 1
+                            Xbar[x, y] -= 1
+                Xidle[x, y] -= 1
 
         return actions
 
@@ -277,7 +287,8 @@ class Agent(object):
         x, y = pos
         pos_frame = np.zeros((FRAME_WIDTH, FRAME_HEIGHT))
         pos_frame[x, y] = 1.0
-        feature = np.float32([e / 255.0 for e in env_state] + [pos_frame])
+        W, Winstant, X, Xbar, Xidle = env_state
+        feature = np.float32([W / 300.0, Winstant / 10.0, X / 100.0, Xbar / 100.0, Xidle / 10.0, pos_frame])
         return feature
 
     def create_time_feature(self, minofday, dayofweek):
@@ -296,7 +307,7 @@ class Agent(object):
     def run_qlearning(self, env_state, vehicles):
         # Store transition in replay memory
 
-        if not len(self.state_buffer) or self.state_buffer[0]['stage'] != self.stage:
+        if len(self.state_buffer) < self.cycle:
             return
 
         state_action = self.state_buffer.popleft()
@@ -310,7 +321,7 @@ class Agent(object):
         state_action['delay'] =  np.round(vdata['eta'].values / self.cycle).astype(np.uint8)
         state_action['next_latlon'] = vdata[['lat', 'lon']].values.astype(np.float32)
         state_action['next_pos'] = self.geo_table.loc[vdata['geohash'], ['x', 'y']].values.astype(np.uint8)
-        state_action['next_env'] = env_state
+        state_action['next_env'] = env_state[:]
         self.replay_memory.append([state_action[key] for key in self.replay_memory_keys])
         self.replay_memory_weights.append(weight)
         if len(self.replay_memory) > NUM_REPLAY_MEMORY:
@@ -356,13 +367,14 @@ class Agent(object):
         #1 dayofweek
         #2 latlon
         #3 env
-        #4 pos
-        #5 action
-        #6 reward
-        #7 next_latlon
-        #8 next_env
-        #9 next_pos
-        #10 delay
+        #4 resource
+        #5 pos
+        #6 action
+        #7 reward
+        #8 next_latlon
+        #9 next_env
+        #10 next_pos
+        #11 delay
         weights = np.array(self.replay_memory_weights, dtype=np.float32)
         memory_index = np.random.choice(range(len(self.replay_memory)), size=BATCH_SIZE*NUM_BATCH/SAMPLE_PER_FRAME, p=weights/weights.sum())
         for i in memory_index:
@@ -371,12 +383,12 @@ class Agent(object):
             time_feature = self.create_time_feature(data[0], data[1])
             aux_batch += [self.create_aux_feature(time_feature, data[2][rand]) for rand in rands]
             next_time_feature = self.create_time_feature(data[0] + self.cycle, data[1])
-            next_aux_batch += [self.create_aux_feature(next_time_feature, data[7][rand]) for rand in rands]
-            main_batch += [self.create_main_feature(data[3], data[4][rand]) for rand in rands]
-            next_main_batch += [self.create_main_feature(data[8], data[9][rand]) for rand in rands]
-            action_batch += [data[5][rand] for rand in rands]
-            reward_batch += [data[6][rand] for rand in rands]
-            delay_batch += [data[10][rand] for rand in rands]
+            next_aux_batch += [self.create_aux_feature(next_time_feature, data[8][rand]) for rand in rands]
+            main_batch += [self.create_main_feature(data[3]+data[4][rand], data[5][rand]) for rand in rands]
+            next_main_batch += [self.create_main_feature(data[9], data[10][rand]) for rand in rands]
+            action_batch += [data[6][rand] for rand in rands]
+            reward_batch += [data[7][rand] for rand in rands]
+            delay_batch += [data[11][rand] for rand in rands]
 
         # Double DQN
         target_q_batch = self.target_q_values.eval(
@@ -424,21 +436,24 @@ class Agent(object):
         x = MaxPooling2D(pool_size=(2, 2), name='main/pool1')(x)
         x = Convolution2D(32, 4, 4, activation='relu', name='main/conv2')(x)
         x = MaxPooling2D(pool_size=(2, 2), name='main/pool2')(x)
-        x = Flatten()(x)
-        # x = tf.reshape(x, [-1, np.prod(x.get_shape()[1:].as_list())])
-        merged = merge([x, aux_input], mode='concat')
-        merged = Dense(128, activation='relu', name='main/dense')(merged)
+        x = Convolution2D(64, 3, 3, activation='relu', name='main/conv3')(x)
+        x = MaxPooling2D(pool_size=(2, 2), name='main/pool3')(x)
+        main_output = Flatten(name='main/flatten')(x)
+        aux_output = Dense(32, activation='relu', name='aux/dense')(aux_input)
+
+        merged = merge([main_output, aux_output], mode='concat', name='merge/merge')
+        merged = Dense(128, activation='relu', name='merge/dense')(merged)
 
         v = Dense(128, activation='relu', name='value/dense1')(merged)
-        v = Dense(1, name='value/dense3')(v)
+        v = Dense(1, name='value/dense2')(v)
         value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
                         output_shape=(self.num_actions,), name='value/lambda')(v)
 
         a = Dense(128, activation='relu', name='advantage/dense1')(merged)
-        a = Dense(self.num_actions, name='advantage/dense3')(a)
+        a = Dense(self.num_actions, name='advantage/dense2')(a)
         advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(a)
 
-        q_values = merge([value, advantage], mode='sum')
+        q_values = merge([value, advantage], mode='sum', name='q_values')
         model = Model(input=[main_input, aux_input], output=q_values)
 
         return main_input, aux_input, q_values, model
