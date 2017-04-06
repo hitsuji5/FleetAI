@@ -35,7 +35,7 @@ SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 8 # Number of batches
 SAMPLE_PER_FRAME = 2
-TARGET_UPDATE_INTERVAL = 120  # The frequency with which the target network is updated
+TARGET_UPDATE_INTERVAL = 30  # The frequency with which the target network is updated
 SUMMARY_INTERVAL = 30
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
@@ -74,7 +74,7 @@ class Agent(object):
         self.replay_memory = deque()
         self.replay_memory_weights = deque()
         self.replay_memory_keys = [
-            'minofday', 'dayofweek', 'latlon', 'W', 'X', 'X_pred', 'pos', 'action',
+            'minofday', 'dayofweek', 'latlon', 'env', 'pos', 'action',
             'reward', 'next_latlon', 'next_env', 'next_pos', 'delay']
 
         # Create q network
@@ -186,11 +186,11 @@ class Agent(object):
 
     def e_greedy(self, env_state, resource, positions):
         W, X, X_pred = env_state
+        # X_pred0 = X_pred.copy()
         actions = []
         vehicle_memory = []
         action_memory = []
         reward_memory = []
-        pred_state_memory = []
         latlon_memory = []
 
         time_feature = self.create_time_feature(self.minofday, self.dayofweek)
@@ -212,7 +212,6 @@ class Agent(object):
                     aid = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
 
                 action_memory.append(aid)
-                pred_state_memory.append(X_pred.copy())
 
                 if aid > 0:
                     move_x, move_y = self.action_space[aid]
@@ -233,9 +232,7 @@ class Agent(object):
         state_dict['minofday'] = self.minofday
         state_dict['dayofweek'] = self.dayofweek
         state_dict['vid'] = vehicle_memory
-        state_dict['W'] = W
-        state_dict['X'] = X
-        state_dict['X_pred'] = pred_state_memory
+        state_dict['env'] = [W, X, X_pred]
         state_dict['pos'] = np.uint8([[x, y] for x, y in positions for _ in range(X[x, y])])
         state_dict['latlon'] = np.float32(latlon_memory)
         state_dict['reward'] = np.float32(reward_memory)
@@ -313,7 +310,7 @@ class Agent(object):
         state_action['delay'] =  np.round(vdata['eta'].values / self.cycle).astype(np.uint8)
         state_action['next_latlon'] = vdata[['lat', 'lon']].values.astype(np.float32)
         state_action['next_pos'] = self.geo_table.loc[vdata['geohash'], ['x', 'y']].values.astype(np.uint8)
-        state_action['next_env'] = env_state[:]
+        state_action['next_env'] = env_state
         self.replay_memory.append([state_action[key] for key in self.replay_memory_keys])
         self.replay_memory_weights.append(weight)
         if len(self.replay_memory) > NUM_REPLAY_MEMORY:
@@ -358,14 +355,14 @@ class Agent(object):
         #0 minofday
         #1 dayofweek
         #2 latlon
-        #3,4,5 W, X, X_pred
-        #6 pos
-        #7 action
-        #8 reward
-        #9 next_latlon
-        #10 next_env
-        #11 next_pos
-        #12 delay
+        #3 env
+        #4 pos
+        #5 action
+        #6 reward
+        #7 next_latlon
+        #8 next_env
+        #9 next_pos
+        #10 delay
         weights = np.array(self.replay_memory_weights, dtype=np.float32)
         memory_index = np.random.choice(range(len(self.replay_memory)), size=BATCH_SIZE*NUM_BATCH/SAMPLE_PER_FRAME, p=weights/weights.sum())
         for i in memory_index:
@@ -374,12 +371,12 @@ class Agent(object):
             time_feature = self.create_time_feature(data[0], data[1])
             aux_batch += [self.create_aux_feature(time_feature, data[2][rand]) for rand in rands]
             next_time_feature = self.create_time_feature(data[0] + self.cycle, data[1])
-            next_aux_batch += [self.create_aux_feature(next_time_feature, data[9][rand]) for rand in rands]
-            main_batch += [self.create_main_feature([data[3], data[4], data[5][rand]], data[6][rand]) for rand in rands]
-            next_main_batch += [self.create_main_feature(data[10], data[11][rand]) for rand in rands]
-            action_batch += [data[7][rand] for rand in rands]
-            reward_batch += [data[8][rand] for rand in rands]
-            delay_batch += [data[12][rand] for rand in rands]
+            next_aux_batch += [self.create_aux_feature(next_time_feature, data[7][rand]) for rand in rands]
+            main_batch += [self.create_main_feature(data[3], data[4][rand]) for rand in rands]
+            next_main_batch += [self.create_main_feature(data[8], data[9][rand]) for rand in rands]
+            action_batch += [data[5][rand] for rand in rands]
+            reward_batch += [data[6][rand] for rand in rands]
+            delay_batch += [data[10][rand] for rand in rands]
 
         # Double DQN
         target_q_batch = self.target_q_values.eval(
@@ -423,21 +420,21 @@ class Agent(object):
         main_input = Input(shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT), dtype='float32')
         aux_input = Input(shape=(AUX_INPUT,), dtype='float32')
 
-        x = Convolution2D(8, 5, 5, activation='relu', name='main/conv1')(main_input)
+        x = Convolution2D(16, 5, 5, activation='relu', name='main/conv1')(main_input)
         x = MaxPooling2D(pool_size=(2, 2), name='main/pool1')(x)
-        x = Convolution2D(16, 4, 4, activation='relu', name='main/conv2')(x)
+        x = Convolution2D(32, 4, 4, activation='relu', name='main/conv2')(x)
         x = MaxPooling2D(pool_size=(2, 2), name='main/pool2')(x)
         x = Flatten()(x)
         # x = tf.reshape(x, [-1, np.prod(x.get_shape()[1:].as_list())])
         merged = merge([x, aux_input], mode='concat')
         merged = Dense(128, activation='relu', name='main/dense')(merged)
 
-        v = Dense(64, activation='relu', name='value/dense1')(merged)
+        v = Dense(128, activation='relu', name='value/dense1')(merged)
         v = Dense(1, name='value/dense3')(v)
         value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
                         output_shape=(self.num_actions,), name='value/lambda')(v)
 
-        a = Dense(64, activation='relu', name='advantage/dense1')(merged)
+        a = Dense(128, activation='relu', name='advantage/dense1')(merged)
         a = Dense(self.num_actions, name='advantage/dense3')(a)
         advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(a)
 
