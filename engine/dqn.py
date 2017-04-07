@@ -15,7 +15,7 @@ ENV_NAME = 'duel'
 FRAME_WIDTH = 31 # Frame width of heat map inputs
 FRAME_HEIGHT = 32 # Frame height of heat map inputs
 STATE_LENGTH = 6  # Number of most recent frames to produce the input to the network
-EXP_MA_PERIOD = 30.0 # Exponential moving average period
+AVERAGE_PERIOD = 30.0 # Exponential moving average period
 MAX_MOVE = 3 # Maximum distance of an action
 AUX_INPUT = 6 # Number of auxiliary inputs
 GAMMA = 0.90  # Discount factor
@@ -29,14 +29,14 @@ INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
 INITIAL_BETA = 0.70 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
-INITIAL_REPLAY_SIZE = 300  # Number of steps to populate the replay memory before training starts
+INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
 NUM_BATCH = 8 # Number of batches
 SAMPLE_PER_FRAME = 2
-TARGET_UPDATE_INTERVAL = 10  # The frequency with which the target network is updated
-SUMMARY_INTERVAL = 10
+TARGET_UPDATE_INTERVAL = 30  # The frequency with which the target network is updated
+SUMMARY_INTERVAL = 30
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
@@ -50,6 +50,10 @@ class Agent(object):
         self.time_step = time_step
         self.cycle = cycle
         self.training = training
+
+        self.lat0 = geohash_table.lat.min()
+        self.lon0 = geohash_table.lon.min()
+        self.dl = 0.3 / (219 - 1) * 7
 
         self.xy2g = [[list(self.geo_table[(self.geo_table.x==x)&(self.geo_table.y==y)].index)
                       for y in range(FRAME_HEIGHT)] for x in range(FRAME_WIDTH)]
@@ -115,26 +119,32 @@ class Agent(object):
     def reset(self, requests, dayofweek, minofday):
         self.dayofweek = dayofweek
         self.minofday = minofday
-        self.geo_table['W'] = 0
+        self.geo_table['W_1'] = 0
+        self.geo_table['W_2'] = 0
         minutes = (requests.second.values[-1] - requests.second.values[0]) / 60.0
-        count = requests.groupby('phash')['plat'].count() * EXP_MA_PERIOD / minutes
-        self.geo_table.loc[count.index, 'W'] = count.values
-        self.geo_table['W_instant'] = self.geo_table['W'] / EXP_MA_PERIOD
-        self.stage = 0
+        count = requests.groupby('phash')['plat'].count() * AVERAGE_PERIOD / minutes
+        self.state_buffer = deque()
+        self.request_buffer = deque()
+        for i in range(int(AVERAGE_PERIOD)):
+            self.request_buffer.append(count.copy())
         self.start_iter = self.num_iters
         self.total_q_max = 0
         self.total_loss = 0
-        self.state_buffer = deque()
+
 
     def get_actions(self, vehicles, requests):
         self.update_time()
-        env_state, resource = self.preprocess(vehicles, requests)
+        self.update_demand(requests)
+        env_state, resource = self.preprocess(vehicles)
 
         if self.training:
             self.run_qlearning(env_state, vehicles)
+
+        if len(resource.index) > 0:
             actions = self.e_greedy(env_state, resource)
         else:
-            actions = self.qmax_action(env_state, resource)
+            actions = []
+            # actions = self.qmax_action(env_state, resource)
 
         return actions
 
@@ -146,160 +156,222 @@ class Agent(object):
             self.dayofweek = (self.dayofweek + 1) % 7
 
 
-    def preprocess(self, vehicles, requests):
-        # update exp moving average of pickup demand
-        # count = requests.groupby('phash')['plat'].count()
-        # self.geo_table.loc[count.index, 'W'] += count.values
-        self.geo_table['W_instant'] = requests.groupby('phash')['plat'].count()
-        self.geo_table = self.geo_table.fillna(0)
-        self.geo_table['W'] = (1 - 1 / EXP_MA_PERIOD) * self.geo_table['W'] + self.geo_table['W_instant']
+    def update_demand(self, requests):
+        if len(self.request_buffer) >= AVERAGE_PERIOD:
+            self.request_buffer.popleft()
+        count = requests.groupby('phash')['plat'].count()
+        self.request_buffer.append(count)
+        self.geo_table.loc[:, ['W_1', 'W_2']] = 0
+        for i, W in enumerate(self.request_buffer):
+            if i < AVERAGE_PERIOD / 2.0:
+                self.geo_table.loc[W.index, 'W_1'] += W.values
+            else:
+                self.geo_table.loc[W.index, 'W_2'] += W.values
 
-        # num_vehicles = len(vehicles)
-        # resources to be controlled in this stage
-        resource_idle = vehicles[(vehicles.available==1)&(vehicles.idle%self.cycle==0)]
-        resource_wt = vehicles[vehicles.status=='WT']
-        resource_mv = vehicles[vehicles.status=='MV']
+    def preprocess(self, vehicles):
+        vehicles['x'] = np.uint8((vehicles.lon - self.lon0) / self.dl)
+        vehicles['y'] = np.uint8((vehicles.lat - self.lat0) / self.dl)
 
-        # DataFrame of the number of resources by geohash
-        self.geo_table['X_idle'] = resource_idle.groupby('geohash')['available'].count().astype(int)
-        self.geo_table['X_wt'] = resource_wt.groupby('geohash')['available'].count().astype(int)
-        self.geo_table['X_mv'] = resource_mv.groupby('geohash')['available'].count().astype(int)
-        self.geo_table['R'] = vehicles[vehicles.eta <= self.cycle].groupby('dest_geohash')['available'].count()
+        R = vehicles[vehicles.available==1]
+        R_idle = R[R.idle%self.cycle==0]
+        R_bar = vehicles[vehicles.eta <= self.cycle]
+
+        self.geo_table['X_bar'] = R_bar.groupby('dest_geohash')['available'].count()
         self.geo_table = self.geo_table.fillna(0)
-        self.geo_table['X'] = self.geo_table.X_wt + self.geo_table.X_mv
-        self.geo_table['X_bar'] = self.geo_table.X_wt + self.geo_table.R
-        X_pred = self.geo_table['X_bar'] - self.geo_table.W * self.cycle / EXP_MA_PERIOD
+        W = self.geo_table.W_1 + self.geo_table.W_2
+        X_pred = self.geo_table.X_bar - W * self.cycle / AVERAGE_PERIOD
         self.Xpred_sum = X_pred.sum()
-        self.geo_table['ratio'] = X_pred / self.Xpred_sum - self.geo_table.W / self.geo_table.W.sum()
+        self.geo_table['ratio'] = X_pred / self.Xpred_sum - W / W.sum()
 
-        df = self.geo_table.groupby(['x', 'y'])[['X_idle', 'X', 'X_bar', 'W', 'W_instant']].sum().reset_index()
-        X_idle = df.pivot(index='x', columns='y', values='X_idle').fillna(0).values.astype(np.uint16)
+        df = self.geo_table.groupby(['x', 'y'])[['X_bar', 'W_1', 'W_2']].sum()
+        df['X'] = R.groupby(['x', 'y'])['available'].count().astype(int)
+        df['X_idle'] = R_idle.groupby(['x', 'y'])['available'].count().astype(int)
+        df = df.reset_index()
         X = df.pivot(index='x', columns='y', values='X').fillna(0).values.astype(np.uint16)
+        X_idle = df.pivot(index='x', columns='y', values='X_idle').fillna(0).values.astype(np.uint16)
         X_bar = df.pivot(index='x', columns='y', values='X_bar').fillna(0).values.astype(np.uint16)
-        W = df.pivot(index='x', columns='y', values='W').fillna(0).values.astype(np.uint16)
-        W_instant = df.pivot(index='x', columns='y', values='W_instant').fillna(0).values.astype(np.uint8)
-        env_state = [W, W_instant, X, X_bar, X_idle]
+        W_1 = df.pivot(index='x', columns='y', values='W_1').fillna(0).values.astype(np.uint16)
+        W_2 = df.pivot(index='x', columns='y', values='W_2').fillna(0).values.astype(np.uint16)
+        env_state = [W_1, W_2, X, X_bar, X_idle]
 
-        return env_state, resource_idle
+        return env_state, R_idle
 
+
+    # def e_greedy(self, env_state, resource):
+    #     W, Winstant, X, Xbar, Xidle = env_state
+    #     actions = []
+    #
+    #     positions = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if Xidle[x, y] > 0]
+    #     if len(positions) == 0:
+    #         return actions
+    #
+    #     vehicle_memory = []
+    #     action_memory = []
+    #     reward_memory = []
+    #     latlon_memory = []
+    #     resource_memory = []
+    #     time_feature = self.create_time_feature(self.minofday, self.dayofweek)
+    #     for i, (x, y) in enumerate(positions):
+    #         vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
+    #         vids = vdata['id'].values
+    #         reward_memory += list(vdata['reward'].values)
+    #         vehicle_memory += list(vids)
+    #         latlon_memory += [(lat, lon) for lat, lon in vdata[['lat', 'lon']].values]
+    #
+    #         for vid in vids:
+    #             if self.epsilon < np.random.random():
+    #                 latlon = vdata.loc[vid, ['lat', 'lon']]
+    #                 main_feature = np.array([self.create_main_feature(env_state, (x, y))])
+    #                 aux_feature = np.array([self.create_aux_feature(time_feature, latlon)])
+    #                 aid = np.argmax(self.q_values.eval(feed_dict={
+    #                     self.s: main_feature, self.x: aux_feature})[0])
+    #             else:
+    #                 aid = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
+    #
+    #             action_memory.append(aid)
+    #             resource_memory.append([Xbar.copy(), Xidle.copy()])
+    #
+    #             if aid > 0:
+    #                 move_x, move_y = self.action_space[aid]
+    #                 x_ = x + move_x
+    #                 y_ = y + move_y
+    #                 if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
+    #                     g = self.xy2g[x_][y_]
+    #                     if len(g) > 0:
+    #                         gmin = self.geo_table.loc[g, 'ratio'].argmin()
+    #                         lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
+    #                         actions.append((vid, (lat, lon)))
+    #                         Xbar[x_, y_] += 1
+    #                         Xbar[x, y] -= 1
+    #
+    #                         # Update demand supply ratio
+    #                         vg = vdata.loc[vid, 'geohash']
+    #                         self.geo_table.loc[vg, 'ratio'] -= 1.0 / self.Xpred_sum
+    #                         self.geo_table.loc[gmin, 'ratio'] += 1.0 / self.Xpred_sum
+    #             Xidle[x, y] -= 1
+    #
+    #     # store the state and action in the buffer
+    #     state_dict = {}
+    #     state_dict['minofday'] = self.minofday
+    #     state_dict['dayofweek'] = self.dayofweek
+    #     state_dict['vid'] = vehicle_memory
+    #     state_dict['env'] = [W, Winstant, X]
+    #     state_dict['resource'] = resource_memory
+    #     state_dict['pos'] = np.uint8([[x, y] for x, y in positions for _ in range(X[x, y])])
+    #     state_dict['latlon'] = np.float32(latlon_memory)
+    #     state_dict['reward'] = np.float32(reward_memory)
+    #     state_dict['action'] = np.uint8(action_memory)
+    #     self.state_buffer.append(state_dict)
+    #
+    #     return actions
 
     def e_greedy(self, env_state, resource):
-        W, Winstant, X, Xbar, Xidle = env_state
+        W_1, W_2, X, Xbar, Xidle = env_state
         actions = []
-
-        positions = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if Xidle[x, y] > 0]
-        if len(positions) == 0:
-            return actions
-
-        vehicle_memory = []
         action_memory = []
-        reward_memory = []
-        latlon_memory = []
         resource_memory = []
         time_feature = self.create_time_feature(self.minofday, self.dayofweek)
-        for i, (x, y) in enumerate(positions):
-            vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
-            vids = vdata['id'].values
-            reward_memory += list(vdata['reward'].values)
-            vehicle_memory += list(vids)
-            latlon_memory += [(lat, lon) for lat, lon in vdata[['lat', 'lon']].values]
+        for vid, (vghash, vlat, vlon, x, y) in resource[['geohash', 'lat', 'lon', 'x', 'y']].iterrows():
+            if not self.training and self.epsilon < np.random.random():
+                main_feature = np.array([self.create_main_feature(env_state, (x, y))])
+                aux_feature = np.array([self.create_aux_feature(time_feature, (vlat, vlon))])
+                aid = np.argmax(self.q_values.eval(feed_dict={
+                    self.s: main_feature, self.x: aux_feature})[0])
+            else:
+                aid = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
 
-            for vid in vids:
-                if self.epsilon < np.random.random():
-                    latlon = vdata.loc[vid, ['lat', 'lon']]
-                    main_feature = np.array([self.create_main_feature(env_state, (x, y))])
-                    aux_feature = np.array([self.create_aux_feature(time_feature, latlon)])
-                    aid = np.argmax(self.q_values.eval(feed_dict={
-                        self.s: main_feature, self.x: aux_feature})[0])
-                else:
-                    aid = 0 if self.beta >= np.random.random() else np.random.randint(self.num_actions)
-
+            if self.training:
                 action_memory.append(aid)
                 resource_memory.append([Xbar.copy(), Xidle.copy()])
 
-                if aid > 0:
-                    move_x, move_y = self.action_space[aid]
-                    x_ = x + move_x
-                    y_ = y + move_y
-                    if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
-                        g = self.xy2g[x_][y_]
-                        if len(g) > 0:
-                            gmin = self.geo_table.loc[g, 'ratio'].argmin()
-                            lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
-                            actions.append((vid, (lat, lon)))
-                            Xbar[x_, y_] += 1
+            if aid > 0:
+                move_x, move_y = self.action_space[aid]
+                x_ = x + move_x
+                y_ = y + move_y
+                if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
+                    g = self.xy2g[x_][y_]
+                    if len(g) > 0:
+                        gmin = self.geo_table.loc[g, 'ratio'].argmin()
+                        lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
+                        actions.append((vid, (lat, lon)))
+                        Xbar[x_, y_] += 1
+
+                        # Update demand supply ratio
+                        if vghash in self.geo_table.index:
                             Xbar[x, y] -= 1
+                            self.geo_table.loc[vghash, 'ratio'] -= 1.0 / self.Xpred_sum
+                        self.geo_table.loc[gmin, 'ratio'] += 1.0 / self.Xpred_sum
 
-                            # Update demand supply ratio
-                            vg = vdata.loc[vid, 'geohash']
-                            self.geo_table.loc[vg, 'ratio'] -= 1.0 / self.Xpred_sum
-                            self.geo_table.loc[gmin, 'ratio'] += 1.0 / self.Xpred_sum
-                Xidle[x, y] -= 1
+            Xidle[x, y] -= 1
 
-        # store the state and action in the buffer
-        state_dict = {}
-        state_dict['minofday'] = self.minofday
-        state_dict['dayofweek'] = self.dayofweek
-        state_dict['vid'] = vehicle_memory
-        state_dict['env'] = [W, Winstant, X]
-        state_dict['resource'] = resource_memory
-        state_dict['pos'] = np.uint8([[x, y] for x, y in positions for _ in range(X[x, y])])
-        state_dict['latlon'] = np.float32(latlon_memory)
-        state_dict['reward'] = np.float32(reward_memory)
-        state_dict['action'] = np.uint8(action_memory)
-        self.state_buffer.append(state_dict)
+
+        if self.training:
+            # store the state and action in the buffer
+            state_dict = {}
+            state_dict['minofday'] = self.minofday
+            state_dict['dayofweek'] = self.dayofweek
+            state_dict['vid'] = resource.index
+            state_dict['env'] = [W_1, W_2, X]
+            state_dict['resource'] = resource_memory
+            state_dict['pos'] = resource[['x', 'y']].values.astype(np.uint8)
+            state_dict['latlon'] = resource[['lat', 'lon']].values.astype(np.float32)
+            state_dict['reward'] = resource['reward'].values.astype(np.float32)
+            state_dict['action'] = np.uint8(action_memory)
+            self.state_buffer.append(state_dict)
+            assert len(state_dict['vid']) == len(state_dict['resource']) == len(state_dict['action'])
 
         return actions
 
 
-    def qmax_action(self, env_state, resource):
-        W, Winstant, X, Xbar, Xidle = env_state
-        actions = []
 
-        positions = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if Xidle[x, y] > 0]
-        if len(positions) == 0:
-            return actions
-
-        time_feature = self.create_time_feature(self.minofday, self.dayofweek)
-        for i, (x, y) in enumerate(positions):
-            vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
-            vids = vdata['id'].values
-
-            for vid in vids:
-                latlon = vdata.loc[vid, ['lat', 'lon']]
-                main_feature = np.array([self.create_main_feature(env_state, (x, y))])
-                aux_feature = np.array([self.create_aux_feature(time_feature, latlon)])
-                aid = np.argmax(self.q_values.eval(feed_dict={
-                    self.s: main_feature, self.x: aux_feature})[0])
-
-                if aid > 0:
-                    move_x, move_y = self.action_space[aid]
-                    x_ = x + move_x
-                    y_ = y + move_y
-                    if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
-                        g = self.xy2g[x_][y_]
-                        if len(g) > 0:
-                            gmin = self.geo_table.loc[g, 'ratio'].argmin()
-                            lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
-                            actions.append((vid, (lat, lon)))
-                            Xbar[x_, y_] += 1
-                            Xbar[x, y] -= 1
-
-                            # Update demand supply ratio
-                            vg = vdata.loc[vid, 'geohash']
-                            self.geo_table.loc[vg, 'ratio'] -= 1.0 / self.Xpred_sum
-                            self.geo_table.loc[gmin, 'ratio'] += 1.0 / self.Xpred_sum
-                Xidle[x, y] -= 1
-
-        return actions
+    # def qmax_action(self, env_state, resource):
+    #     W, Winstant, X, Xbar, Xidle = env_state
+    #     actions = []
+    #
+    #     positions = [(x, y) for y in range(FRAME_HEIGHT) for x in range(FRAME_WIDTH) if Xidle[x, y] > 0]
+    #     if len(positions) == 0:
+    #         return actions
+    #
+    #     time_feature = self.create_time_feature(self.minofday, self.dayofweek)
+    #     for i, (x, y) in enumerate(positions):
+    #         vdata = resource[resource.geohash.str.match('|'.join(self.xy2g[x][y]))]
+    #         vids = vdata['id'].values
+    #
+    #         for vid in vids:
+    #             latlon = vdata.loc[vid, ['lat', 'lon']]
+    #             main_feature = np.array([self.create_main_feature(env_state, (x, y))])
+    #             aux_feature = np.array([self.create_aux_feature(time_feature, latlon)])
+    #             aid = np.argmax(self.q_values.eval(feed_dict={
+    #                 self.s: main_feature, self.x: aux_feature})[0])
+    #
+    #             if aid > 0:
+    #                 move_x, move_y = self.action_space[aid]
+    #                 x_ = x + move_x
+    #                 y_ = y + move_y
+    #                 if x_ >= 0 and x_ < FRAME_WIDTH and y_ >= 0 and y_ < FRAME_HEIGHT:
+    #                     g = self.xy2g[x_][y_]
+    #                     if len(g) > 0:
+    #                         gmin = self.geo_table.loc[g, 'ratio'].argmin()
+    #                         lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
+    #                         actions.append((vid, (lat, lon)))
+    #                         Xbar[x_, y_] += 1
+    #                         Xbar[x, y] -= 1
+    #
+    #                         # Update demand supply ratio
+    #                         vg = vdata.loc[vid, 'geohash']
+    #                         self.geo_table.loc[vg, 'ratio'] -= 1.0 / self.Xpred_sum
+    #                         self.geo_table.loc[gmin, 'ratio'] += 1.0 / self.Xpred_sum
+    #             Xidle[x, y] -= 1
+    #
+    #     return actions
 
 
     def create_main_feature(self, env_state, pos):
         x, y = pos
         pos_frame = np.zeros((FRAME_WIDTH, FRAME_HEIGHT))
         pos_frame[x, y] = 1.0
-        W, Winstant, X, Xbar, Xidle = env_state
-        feature = np.float32([W / 300.0, Winstant / 10.0, X / 100.0, Xbar / 100.0, Xidle / 10.0, pos_frame])
+        W_1, W_2, X, Xbar, Xidle = env_state
+        feature = np.float32([W_1 / 100.0, W_2 / 100.0, X / 100.0, Xbar / 100.0, Xidle / 10.0, pos_frame])
         return feature
 
     def create_time_feature(self, minofday, dayofweek):
@@ -318,7 +390,7 @@ class Agent(object):
     def run_qlearning(self, env_state, vehicles):
         # Store transition in replay memory
 
-        if len(self.state_buffer) < self.cycle:
+        if len(self.state_buffer) == 0 or (self.state_buffer[0]['minofday'] + self.cycle) % 60 == self.minofday:
             return
 
         state_action = self.state_buffer.popleft()
