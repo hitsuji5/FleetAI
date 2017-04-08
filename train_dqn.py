@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import cPickle as pickle
 
@@ -54,7 +55,8 @@ def main():
     agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE)
     trip_chunks = load_trip_chunks(TRIP_PATH, NUM_TRIPS)
     for episode, (trips, date, dayofweek, minofday) in enumerate(trip_chunks):
-        env.reset(NUM_FLEETS, trips, dayofweek, minofday)
+        num_fleets = int(np.sqrt(len(trips)/120000.0) * NUM_FLEETS)
+        env.reset(num_fleets, trips, dayofweek, minofday)
         _, requests, _, _, _ = env.step()
         for _ in range(NO_OP_STEPS - 1):
             _, requests_, _, _, _ = env.step()
@@ -63,13 +65,17 @@ def main():
         num_steps = DURATION / CYCLE - NO_OP_STEPS
 
         print("#############################################################################")
-        print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d} / STEPS: {:d}".format(
-            episode, date, env.dayofweek, env.minofday, num_steps
+        print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d} / VEHICLES: {:d}".format(
+            episode, date, env.dayofweek, env.minofday, num_fleets
         ))
         score = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE)
         describe(score)
         score.to_csv(SCORE_PATH + 'score_dqn' + str(episode) + '.csv')
 
+        if episode > 0 and episode % 10 == 0:
+            print("Saving Experience Memory: {:d}").format(episode)
+            with open(SCORE_PATH + 'ex_memory' + str(episode) + '.pkl', 'wb') as f:
+                pickle.dump(agent.replay_memory, f)
 
 
 if __name__ == '__main__':
