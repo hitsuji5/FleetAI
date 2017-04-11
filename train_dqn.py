@@ -16,7 +16,7 @@ SCORE_PATH = 'data/results/'
 NUM_TRIPS = 12000000
 DURATION = 400
 NUM_FLEETS = 8000
-NO_OP_STEPS = 30  # Number of "do nothing" actions to be performed by the agent at the start of an episode
+NO_OP_STEPS = 0  # Number of "do nothing" actions to be performed by the agent at the start of an episode
 CYCLE = 1
 ACTION_UPDATE_CYCLE = 10
 AVERAGE_CYCLE = 30
@@ -58,9 +58,9 @@ def main():
         num_fleets = int(np.sqrt(len(trips)/120000.0) * NUM_FLEETS)
         env.reset(num_fleets, trips, dayofweek, minofday)
         _, requests, _, _, _ = env.step()
-        for _ in range(NO_OP_STEPS - 1):
-            _, requests_, _, _, _ = env.step()
-            requests = requests.append(requests_)
+        # for _ in range(NO_OP_STEPS - 1):
+        #     _, requests_, _, _, _ = env.step()
+        #     requests = requests.append(requests_)
         agent.reset(requests, env.dayofweek, env.minofday)
         num_steps = DURATION / CYCLE - NO_OP_STEPS
 
@@ -68,7 +68,7 @@ def main():
         print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d} / VEHICLES: {:d}".format(
             episode, date, env.dayofweek, env.minofday, num_fleets
         ))
-        score = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE)
+        score = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE, cheat=True)
         describe(score)
         score.to_csv(SCORE_PATH + 'score_dqn' + str(episode) + '.csv')
 

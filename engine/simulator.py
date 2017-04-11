@@ -52,8 +52,7 @@ class FleetSimulator(object):
         if actions:
             self.dispatch(actions)
 
-        requests = self.requests[(self.requests.second >= self.current_time)
-                                 &(self.requests.second < self.current_time + TIMESTEP * num_steps)]
+        requests = self.get_requests(num_steps)
         wait, reject, gas = 0, 0, 0
         for _ in range(num_steps):
             for vehicle in self.vehicles:
@@ -70,6 +69,10 @@ class FleetSimulator(object):
         vehicles = self.get_vehicles_dataframe()
         return vehicles, requests, wait, reject, gas
 
+    def get_requests(self, num_steps, offset=0):
+        requests = self.requests[(self.requests.second >= self.current_time + offset * TIMESTEP)
+                                 &(self.requests.second < self.current_time + TIMESTEP * (num_steps + offset))]
+        return requests
 
     def get_vehicles_dataframe(self):
         vehicles = [vehicle.get_state() for vehicle in self.vehicles]
