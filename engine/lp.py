@@ -2,6 +2,7 @@ import numpy as np
 import pulp
 from scipy.stats import norm
 from collections import deque
+import Geohash
 
 GAMMA = 0.9
 ETA_ERROR = 3.0
@@ -9,8 +10,7 @@ MAX_MOVE_TIME = 20.0
 
 class Agent(object):
     def __init__(self, geohash_table, eta_table, pdest_table, demand_model,
-                 cycle, T=3, cost=0.0, penalty=25.0):
-        self.geo_table = geohash_table
+                 cycle, T=3, cost=0.0, penalty=20.0):
         self.demand_model = demand_model
         self.eta_table = eta_table
         self.pdest_table = pdest_table
@@ -20,6 +20,21 @@ class Agent(object):
         self.cycle = cycle
         self.cost = cost
         self.penalty = penalty
+
+        N = 219
+        lat0 = 40.6
+        lon0 = -74.041
+        dl = 0.3 / (N - 1)
+        lats = []
+        lons = []
+        for g in geohash_table.index:
+            lat, lon, _, _ = Geohash.decode_exactly(g)
+            lats.append(lat)
+            lons.append(lon)
+        geohash_table['x'] = ((np.array(lons) - lon0) / dl).astype(np.uint8)
+        geohash_table['y'] = ((np.array(lats) - lat0) / dl).astype(np.uint8)
+        self.geo_table = geohash_table
+
 
 
     def reset(self, requests, dayofweek, minofday):
@@ -41,6 +56,25 @@ class Agent(object):
             self.dayofweek = (self.dayofweek + 1) % 7
 
 
+    # def update_demand(self, requests):
+    #     if len(self.request_buffer) >= 60 / self.cycle:
+    #         self.request_buffer.popleft()
+    #     count = requests.groupby('phash')['plat'].count()
+    #     self.request_buffer.append(count)
+    #     self.geo_table.loc[:, ['W_1', 'W_2']] = 0
+    #     for i, W in enumerate(self.request_buffer):
+    #         if i < 30 / self.cycle:
+    #             self.geo_table.loc[W.index, 'W_1'] += W.values
+    #         else:
+    #             self.geo_table.loc[W.index, 'W_2'] += W.values
+    #
+    #     self.geo_table['dayofweek'] = self.dayofweek
+    #     self.geo_table['hour'] = self.minofday / 60.0
+    #     demand = self.demand_model.predict(
+    #         self.geo_table[['dayofweek', 'hour', 'lat', 'lon', 'road_density', 'W_1', 'W_2']])
+    #     self.geo_table['W'] = demand * self.cycle / 30.0
+    #     return
+
     def update_demand(self, requests):
         if len(self.request_buffer) >= 60 / self.cycle:
             self.request_buffer.popleft()
@@ -53,12 +87,17 @@ class Agent(object):
             else:
                 self.geo_table.loc[W.index, 'W_2'] += W.values
 
-        self.geo_table['dayofweek'] = self.dayofweek
-        self.geo_table['hour'] = self.minofday / 60.0
-        demand = self.demand_model.predict(
-            self.geo_table[['dayofweek', 'hour', 'lat', 'lon', 'road_density', 'W_1', 'W_2']])
-        self.geo_table['W'] = demand * self.cycle / 30.0
+        df = self.geo_table
+        W_1 = df.pivot(index='x', columns='y', values='W_1').fillna(0).values
+        W_2 = df.pivot(index='x', columns='y', values='W_2').fillna(0).values
+        min = self.minofday / 1440.0
+        day = self.dayofweek / 7.0
+        aux_features = [np.sin(min), np.cos(min), np.sin(day), np.cos(day)]
+        demand = self.demand_model.predict(np.float32([[W_1, W_2] + [np.ones(W_1.shape) * x for x in aux_features]]))[0,0]
+        self.geo_table['W'] = demand[self.geo_table.x.values, self.geo_table.y.values] * self.cycle / 30.0
+
         return
+
 
     def get_actions(self, vehicles, requests):
         self.update_time()

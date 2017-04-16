@@ -1,6 +1,8 @@
 import pandas as pd
 import time
 import sys
+from random import shuffle
+
 
 def run(env, agent, num_steps, average_cycle=1, cheat=False, cheat_cycle=10):
     score = pd.DataFrame(columns=['dayofweek', 'minofday', 'requests', 'wait_time',
@@ -56,6 +58,63 @@ def load_trips(trip_path, sample_size, skiprows=0):
     trips = trips[features]
 
     return trips, dayofweek, minofday, duration
+
+
+def load_trip_chunks(trip_path, num_trips, duration, offset=0, randomize=True):
+    trips, dayofweek, minofday, minutes = load_trips(trip_path, num_trips)
+    num_chunks = int(minutes / duration)
+    chunks = []
+    date = 1
+    for _ in range(num_chunks):
+        trips['second'] -= trips.second.values[0]
+        chunk = trips[trips.second < (duration + offset) * 60.0]
+        chunks.append((chunk, date, dayofweek, minofday))
+        trips = trips[trips.second >= (duration + offset) * 60.0]
+
+        minofday += duration
+        if minofday >= 1440: # 24 hour * 60 minute
+            minofday -= 1440
+            dayofweek = (dayofweek + 1) % 7
+            date += 1
+    if randomize:
+        shuffle(chunks)
+
+    return chunks
+
+
+def load_trip_eval(trip_path, num_trips, duration, weekend_offset=180):
+    trips, dayofweek, minofday, minutes = load_trips(trip_path, num_trips)
+    chunks = []
+    day_shift = (7 - dayofweek) % 7
+    trips = trips[trips.second >= day_shift * 24 * 60 * 60]
+    # num_chunks = int((minutes - day_shift * 24 * 60) / duration)
+    dayofweek = 0
+    date = 1 + day_shift
+
+    while len(trips):
+        trips['second'] -= trips.second.values[0]
+        if dayofweek == 4:
+            trips = trips[trips.second >= (1440 - weekend_offset) * 60.0]
+            if len(trips) == 0:
+                break
+            trips['second'] -= trips.second.values[0]
+            minofday = 1440 - weekend_offset
+
+        elif dayofweek == 6 and minofday >= (1440 - weekend_offset):
+            break
+
+        chunk = trips[trips.second < duration * 60.0]
+        chunks.append((chunk, date, dayofweek, minofday))
+        trips = trips[trips.second >= duration * 60.0]
+
+        minofday += duration
+        if minofday >= 1440: # 24 hour * 60 minute
+            minofday -= 1440
+            dayofweek = (dayofweek + 1) % 7
+            date += 1
+
+
+    return chunks
 
 
 def describe(score):

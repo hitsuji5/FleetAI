@@ -30,10 +30,12 @@ def main():
     trips, dayofweek, minofday, duration = ex.load_trips(TRIP_PATH, SAMPLE_SIZE)
     num_steps = 1440 / CYCLE
     env.reset(NUM_FLEETS, trips, dayofweek, minofday)
+    _, requests, _, _, _ = env.step()
+
     for _ in range(NO_OP_STEPS):
         _, requests, _, _, _ = env.step()
     agent.reset(requests, env.dayofweek, env.minofday)
-    score = ex.run(env, agent, num_steps, average_cycle=60)
+    score = ex.run(env, agent, num_steps, average_cycle=60, cheat=True)
     ex.describe(score)
 
 if __name__ == '__main__':
