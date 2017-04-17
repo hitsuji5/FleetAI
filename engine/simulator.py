@@ -21,7 +21,7 @@ class FleetSimulator(object):
     and passenger pickup / dropoff are simulated.
     """
 
-    def __init__(self, G, eta_model, cycle, max_action_time=100):
+    def __init__(self, G, eta_model, cycle, max_action_time=15):
         self.router = PathGenerator(G)
         self.eta_model = eta_model
         self.cycle = cycle
@@ -84,6 +84,12 @@ class FleetSimulator(object):
         vehicles = [vehicle.get_location() for vehicle in self.vehicles]
         vehicles = pd.DataFrame(vehicles, columns=['id', 'lat', 'lon', 'available'])
         return vehicles
+
+    def get_vehicles_score(self):
+        vehicles = [vehicle.get_score() for vehicle in self.vehicles]
+        vehicles = pd.DataFrame(vehicles, columns=['id', 'reward', 'service_time', 'idle_time'])
+        return vehicles
+
 
     def match(self, resources, tasks):
         R = resources[resources.available == 1]
@@ -244,3 +250,7 @@ class Vehicle(object):
     def get_location(self):
         lat, lon = self.location
         return (self.id, lat, lon, int(self.available))
+
+
+    def get_score(self):
+        return (self.id, self.reward, self.total_service, self.total_idle)

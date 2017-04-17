@@ -102,10 +102,11 @@ class Agent(object):
     def get_actions(self, vehicles, requests):
         self.update_time()
         self.update_demand(requests)
-        resource_wt = vehicles[vehicles.status=='WT']
+        # resource = vehicles[vehicles.status=='WT']
+        resource = vehicles[vehicles.available==1]
 
         # DataFrame of the number of resources by geohash
-        self.geo_table['X'] = resource_wt.groupby('geohash')['available'].count().astype(int)
+        self.geo_table['X'] = resource.groupby('geohash')['available'].count().astype(int)
 
         # available resources next step
         for t in range(self.T-1):
@@ -145,7 +146,7 @@ class Agent(object):
             nflow = flows[i].sum()
             if nflow < 1:
                 continue
-            vids = self.find_excess(taxi_zones[i], nflow, resource_wt)
+            vids = self.find_excess(taxi_zones[i], nflow, resource)
             locations = self.find_deficiency(taxi_zones, flows[i])
             actions += zip(vids, locations)
         return actions

@@ -4,11 +4,18 @@ import sys
 from random import shuffle
 
 
-def run(env, agent, num_steps, average_cycle=1, cheat=False, cheat_cycle=10):
+def run(env, agent, num_steps, no_op_steps=2, average_cycle=1, cheat=False, cheat_cycle=10):
     score = pd.DataFrame(columns=['dayofweek', 'minofday', 'requests', 'wait_time',
                                   'reject', 'idle_trip', 'resource', 'dispatch', 'reward', 'agent_time'])
 
     vehicles, requests, _, _, _ = env.step()
+    for _ in range(no_op_steps - 2):
+        _, requests_, _, _, _ = env.step()
+        requests = requests.append(requests_)
+    if agent:
+        agent.reset(requests, env.dayofweek, env.minofday)
+    vehicles, requests, _, _, _ = env.step()
+
     start = time.time()
     prev_reward = 0
     N = len(vehicles)
@@ -24,15 +31,15 @@ def run(env, agent, num_steps, average_cycle=1, cheat=False, cheat_cycle=10):
             actions = agent.get_actions(vehicles, requests)
         else:
             actions = []
+
         agent_time = time.time() - agent_start
         dispatch = len(actions)
-        num_requests = len(requests)
-        num_vehicles = sum(vehicles.available)
-
+        dayofweek = env.dayofweek
+        minofday = env.minofday
         vehicles, requests, wait, reject, idle = env.step(actions)
         avg_reward = vehicles.reward.mean()
-        score.loc[t] = (env.dayofweek, env.minofday, num_requests, wait, reject, idle,
-                          num_vehicles, dispatch, avg_reward - prev_reward, agent_time)
+        score.loc[t] = (dayofweek, minofday, len(requests), wait, reject, idle,
+                        sum(vehicles.available), dispatch, avg_reward - prev_reward, agent_time)
         prev_reward = avg_reward
 
         if t > 0  and t % average_cycle == 0:
@@ -44,7 +51,7 @@ def run(env, agent, num_steps, average_cycle=1, cheat=False, cheat_cycle=10):
             ))
             sys.stdout.flush()
 
-    return score
+    return score, env.get_vehicles_score()
 
 
 def load_trips(trip_path, sample_size, skiprows=0):
@@ -82,37 +89,25 @@ def load_trip_chunks(trip_path, num_trips, duration, offset=0, randomize=True):
     return chunks
 
 
-def load_trip_eval(trip_path, num_trips, duration, weekend_offset=180):
+def load_trip_eval(trip_path, num_trips, day_start=4, no_op_steps=30):
     trips, dayofweek, minofday, minutes = load_trips(trip_path, num_trips)
     chunks = []
     day_shift = (7 - dayofweek) % 7
-    trips = trips[trips.second >= day_shift * 24 * 60 * 60]
-    # num_chunks = int((minutes - day_shift * 24 * 60) / duration)
+    # Start at 6 am on Monday
+    trips = trips[trips.second >= ((day_shift * 24 + day_start) * 60 - no_op_steps) * 60]
     dayofweek = 0
+    minofday = day_start * 60 - no_op_steps
     date = 1 + day_shift
 
     while len(trips):
         trips['second'] -= trips.second.values[0]
-        if dayofweek == 4:
-            trips = trips[trips.second >= (1440 - weekend_offset) * 60.0]
-            if len(trips) == 0:
-                break
-            trips['second'] -= trips.second.values[0]
-            minofday = 1440 - weekend_offset
-
-        elif dayofweek == 6 and minofday >= (1440 - weekend_offset):
+        day_chunk = trips[trips.second < (24 * 60 + no_op_steps) * 60.0]
+        chunks.append((day_chunk, date, dayofweek, minofday))
+        trips = trips[trips.second >= 24 * 60 * 60.0]
+        dayofweek = (dayofweek + 1) % 7
+        date += 1
+        if dayofweek == 0:
             break
-
-        chunk = trips[trips.second < duration * 60.0]
-        chunks.append((chunk, date, dayofweek, minofday))
-        trips = trips[trips.second >= duration * 60.0]
-
-        minofday += duration
-        if minofday >= 1440: # 24 hour * 60 minute
-            minofday -= 1440
-            dayofweek = (dayofweek + 1) % 7
-            date += 1
-
 
     return chunks
 
