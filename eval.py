@@ -2,7 +2,7 @@ import pandas as pd
 import cPickle as pickle
 from engine.simulator import FleetSimulator
 # from engine.lp import Agent
-# from engine.dqn import Agent
+from engine.dqn import Agent
 # from engine.dqn_classic import Agent
 # from keras.models import model_from_json
 from experiment import run, load_trip_eval, describe
@@ -18,9 +18,12 @@ SCORE_PATH = 'data/results/'
 
 NUM_TRIPS = 5000000
 NUM_FLEETS = 8000
-NO_OP_STEPS = 2  #DQN: 30
-CYCLE = 15 #DQN: 1
-ACTION_UPDATE_CYCLE = 15 #DQN: 10
+NO_OP_STEPS = 30
+CYCLE = 1
+ACTION_UPDATE_CYCLE = 10
+# NO_OP_STEPS = 2
+# CYCLE = 15
+# ACTION_UPDATE_CYCLE = 15
 NUM_STEPS = 24 * 60 / CYCLE
 
 def main():
@@ -31,19 +34,19 @@ def main():
     with open(ETA_MODEL_PATH, 'r') as f:
         eta_model = pickle.load(f)
 
-    # load json and create model
     # with open(DEMAND_MODEL_PATH + 'model.json', 'r') as f:
     #     demand_model = f.read()
     # demand_model = model_from_json(demand_model)
     # demand_model.load_weights(DEMAND_MODEL_PATH + 'model.h5')
 
-    # geohash_table = pd.read_csv(GEOHASH_TABLE_PATH, index_col='geohash')
+    geohash_table = pd.read_csv(GEOHASH_TABLE_PATH, index_col='geohash')
     # eta_table = pd.read_csv(ETA_TABLE_PATH, index_col=['dayofweek', 'hour', 'pickup_zone'])
     # pdest_table = pd.read_csv(PDEST_TABLE_PATH, index_col=['dayofweek', 'hour', 'pickup_zone'])
 
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
-    # rhc_agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE)
-    # dqn_agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, training=False, load_netword=True)
+    # agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE)
+    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, training=False, load_netword=True)
+
 
     trip_chunks = load_trip_eval(TRIP_PATH, NUM_TRIPS)
     for episode, (trips, date, dayofweek, minofday) in enumerate(trip_chunks):
@@ -52,7 +55,7 @@ def main():
         print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d}".format(
             episode, date, env.dayofweek, env.minofday
         ))
-        score, vscore = run(env, None, NUM_STEPS, average_cycle=2)
+        score, vscore = run(env, agent, NUM_STEPS, average_cycle=30)
         describe(score)
         score.to_csv(SCORE_PATH + 'score' + str(dayofweek) + '.csv', index=False)
         vscore.to_csv(SCORE_PATH + 'vscore' + str(dayofweek) + '.csv', index=False)

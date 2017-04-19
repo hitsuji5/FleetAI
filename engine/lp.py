@@ -2,7 +2,6 @@ import numpy as np
 import pulp
 from scipy.stats import norm
 from collections import deque
-import Geohash
 
 GAMMA = 0.9
 ETA_ERROR = 3.0
@@ -20,19 +19,6 @@ class Agent(object):
         self.cycle = cycle
         self.cost = cost
         self.penalty = penalty
-
-        N = 219
-        lat0 = 40.6
-        lon0 = -74.041
-        dl = 0.3 / (N - 1)
-        lats = []
-        lons = []
-        for g in geohash_table.index:
-            lat, lon, _, _ = Geohash.decode_exactly(g)
-            lats.append(lat)
-            lons.append(lon)
-        geohash_table['x'] = ((np.array(lons) - lon0) / dl).astype(np.uint8)
-        geohash_table['y'] = ((np.array(lats) - lat0) / dl).astype(np.uint8)
         self.geo_table = geohash_table
 
 
@@ -88,13 +74,13 @@ class Agent(object):
                 self.geo_table.loc[W.index, 'W_2'] += W.values
 
         df = self.geo_table
-        W_1 = df.pivot(index='x', columns='y', values='W_1').fillna(0).values
-        W_2 = df.pivot(index='x', columns='y', values='W_2').fillna(0).values
+        W_1 = df.pivot(index='x_', columns='y_', values='W_1').fillna(0).values
+        W_2 = df.pivot(index='x_', columns='y_', values='W_2').fillna(0).values
         min = self.minofday / 1440.0
         day = self.dayofweek / 7.0
         aux_features = [np.sin(min), np.cos(min), np.sin(day), np.cos(day)]
         demand = self.demand_model.predict(np.float32([[W_1, W_2] + [np.ones(W_1.shape) * x for x in aux_features]]))[0,0]
-        self.geo_table['W'] = demand[self.geo_table.x.values, self.geo_table.y.values] * self.cycle / 30.0
+        self.geo_table['W'] = demand[self.geo_table.x_.values, self.geo_table.y_.values] * self.cycle / 30.0
 
         return
 

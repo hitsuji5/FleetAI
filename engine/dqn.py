@@ -41,7 +41,7 @@ MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
 SAVE_NETWORK_PATH = DATA_PATH + '/saved_networks'
 SAVE_SUMMARY_PATH = DATA_PATH + '/summary'
-
+DEMAND_MODEL_PATH = 'data/model/demand/model.h5'
 
 class Agent(object):
     def __init__(self, geohash_table, time_step, cycle, training=True, load_netword=False):
@@ -64,7 +64,10 @@ class Agent(object):
         self.beta = INITIAL_BETA
         self.beta_step = (FINAL_BETA - INITIAL_BETA) / EXPLORATION_STEPS
 
-        self.num_iters = -INITIAL_REPLAY_SIZE
+        if self.training:
+            self.num_iters = -INITIAL_REPLAY_SIZE
+        else:
+            self.num_iters = 0
         self.start_iter = self.num_iters
 
         # Parameters used for summary
@@ -115,17 +118,22 @@ class Agent(object):
         # Initialize target network
         self.sess.run(self.update_target_network)
 
+        if not self.training:
+            self.demand_model = self.build_d_network()
+            self.demand_model.load_weights(DEMAND_MODEL_PATH)
+
 
     def reset(self, requests, dayofweek, minofday):
         self.dayofweek = dayofweek
         self.minofday = minofday
-        self.geo_table['W'] = 0
-        minutes = (requests.second.values[-1] - requests.second.values[0]) / 60.0
-        count = requests.groupby('phash')['plat'].count() * AVERAGE_PERIOD / minutes
-        self.state_buffer = deque()
         self.request_buffer = deque()
-        for i in range(int(AVERAGE_PERIOD)):
+        self.geo_table['W_1'] = 0
+        self.geo_table['W_2'] = 0
+        minutes = (requests.second.values[-1] - requests.second.values[0]) / 60.0
+        count = requests.groupby('phash')['plat'].count() * self.time_step / minutes
+        for i in range(int(60 / self.time_step)):
             self.request_buffer.append(count.copy())
+        self.state_buffer = deque()
         self.start_iter = self.num_iters
         self.total_q_max = 0
         self.total_loss = 0
@@ -150,7 +158,8 @@ class Agent(object):
 
     def get_actions(self, vehicles, requests):
         self.update_time()
-        # self.update_demand(requests)
+        if not self.training:
+            self.update_demand(requests)
         env_state, resource = self.preprocess(vehicles)
 
         if self.training:
@@ -193,10 +202,32 @@ class Agent(object):
             self.minofday -= 1440
             self.dayofweek = (self.dayofweek + 1) % 7
 
-    def update_future_demand(self, requests):
-        self.geo_table['W'] = 0
-        W = requests.groupby('phash')['plat'].count()
-        self.geo_table.loc[W.index, 'W'] += W.values
+
+    def update_demand(self, requests):
+        if len(self.request_buffer) >= 60 / self.time_step:
+            self.request_buffer.popleft()
+        count = requests.groupby('phash')['plat'].count()
+        self.request_buffer.append(count)
+
+        if self.num_iters % 10 == 0:
+            self.geo_table.loc[:, ['W_1', 'W_2']] = 0
+            for i, W in enumerate(self.request_buffer):
+                if i < 30 / self.time_step:
+                    self.geo_table.loc[W.index, 'W_1'] += W.values
+                else:
+                    self.geo_table.loc[W.index, 'W_2'] += W.values
+
+            df = self.geo_table
+            W_1 = df.pivot(index='x_', columns='y_', values='W_1').fillna(0).values
+            W_2 = df.pivot(index='x_', columns='y_', values='W_2').fillna(0).values
+            min = self.minofday / 1440.0
+            day = self.dayofweek / 7.0
+            aux_features = [np.sin(min), np.cos(min), np.sin(day), np.cos(day)]
+            demand = self.demand_model.predict(np.float32([[W_1, W_2] + [np.ones(W_1.shape) * x for x in aux_features]]))[0,0]
+            self.geo_table['W'] = demand[self.geo_table.x_.values, self.geo_table.y_.values]
+
+        return
+
 
     def preprocess(self, vehicles):
         vehicles['x'] = np.uint8((vehicles.lon - self.lon0) / self.dl)
@@ -463,6 +494,14 @@ class Agent(object):
 
         return
 
+    def build_d_network(self):
+        input = Input(shape=(6, 212, 219), dtype='float32')
+        x = Convolution2D(8, 5, 5, activation='relu', border_mode='same')(input)
+        x = Convolution2D(16, 3, 3, activation='relu', border_mode='same')(x)
+        output = Convolution2D(1, 1, 1, activation='relu', border_mode='same')(x)
+        model = Model(input=input, output=output)
+        return model
+
 
     def build_network(self):
         main_input = Input(shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT), dtype='float32')
@@ -472,15 +511,12 @@ class Agent(object):
         x = MaxPooling2D(pool_size=(2, 2), name='main/pool1')(x)
         x = Convolution2D(32, 4, 4, activation='relu', name='main/conv2')(x)
         x = MaxPooling2D(pool_size=(2, 2), name='main/pool2')(x)
-        # x = Convolution2D(64, 3, 3, activation='relu', name='main/conv3')(x)
-        # x = MaxPooling2D(pool_size=(2, 2), name='main/pool3')(x)
         x = Flatten(name='main/flatten')(x)
         main_output = Dense(128, activation='relu', name='main/dense')(x)
 
         aux_output = Dense(32, activation='relu', name='aux/dense')(aux_input)
 
         merged = merge([main_output, aux_output], mode='concat', name='main/merge')
-        # merged = Dense(128, activation='relu', name='main/dense')(merged)
 
         v = Dense(128, activation='relu', name='value/dense1')(merged)
         v = Dense(1, name='value/dense2')(v)
@@ -592,3 +628,9 @@ class Agent(object):
             print('Successfully loaded: ' + checkpoint.model_checkpoint_path)
         else:
             print('Training new network...')
+
+
+    def update_future_demand(self, requests):
+        self.geo_table['W'] = 0
+        W = requests.groupby('phash')['plat'].count()
+        self.geo_table.loc[W.index, 'W'] += W.values
