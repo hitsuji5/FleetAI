@@ -16,7 +16,7 @@ ETA_TABLE_PATH = 'data/table/eta.csv'
 PDEST_TABLE_PATH = 'data/table/pdest.csv'
 SCORE_PATH = 'data/results/'
 
-NUM_TRIPS = 5000000
+NUM_TRIPS = 500000
 NUM_FLEETS = 8000
 NO_OP_STEPS = 30
 CYCLE = 1
@@ -45,7 +45,7 @@ def main():
 
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
     # agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE)
-    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, training=False, load_netword=True)
+    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, training=False, load_netword=False)
 
 
     trip_chunks = load_trip_eval(TRIP_PATH, NUM_TRIPS)
