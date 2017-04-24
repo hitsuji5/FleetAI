@@ -19,8 +19,8 @@ SCORE_PATH = 'data/results/'
 AC_NETWORK_PATH = 'data/a3c/saved_networks'
 SAVE_SUMMARY_PATH = 'data/a3c/summary'
 
-NUM_TRIPS = 1200000
-DURATION = 400
+NUM_TRIPS = 12000000
+DURATION = 1600
 NUM_FLEETS = 8000
 # NO_OP_STEPS = 10  # Number of "do nothing" actions to be performed by the agent at the start of an episode
 CYCLE = 1
@@ -146,7 +146,6 @@ def main():
         num_workers = multiprocessing.cpu_count()  # Set workers ot number of available CPU threads
         trip_chunks = load_trip_chunks(TRIP_PATH, NUM_TRIPS, DURATION)
         workers = []
-        num_workers = 3
 
         for i in range(num_workers):
             name = 'worker_' + str(i)
