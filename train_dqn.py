@@ -54,7 +54,7 @@ def main():
         print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d} / VEHICLES: {:d}".format(
             episode, date, env.dayofweek, env.minofday, num_fleets
         ))
-        score = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE, cheat=True)
+        score, _ = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE, cheat=True)
         describe(score)
         score.to_csv(SCORE_PATH + 'score_dqn' + str(episode) + '.csv')
 
