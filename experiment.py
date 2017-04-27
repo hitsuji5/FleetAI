@@ -4,7 +4,7 @@ import sys
 from random import shuffle
 
 
-def run(env, agent, num_steps, no_op_steps=2, average_cycle=1, cheat=False, cheat_cycle=10):
+def run(env, agent, num_steps, no_op_steps=2, average_cycle=1, cheat=False, cheat_cycle=15):
     score = pd.DataFrame(columns=['dayofweek', 'minofday', 'requests', 'wait_time',
                                   'reject', 'idle_trip', 'resource', 'dispatch', 'reward', 'agent_time'])
 

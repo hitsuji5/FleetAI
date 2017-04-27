@@ -1,5 +1,4 @@
 import threading
-import multiprocessing
 from time import sleep
 import numpy as np
 import pandas as pd
@@ -8,7 +7,6 @@ import tensorflow as tf
 from engine.a3c import AC_Network, Agent
 from engine.simulator import FleetSimulator
 from experiment import load_trip_chunks
-from collections import deque
 
 
 GRAPH_PATH = 'data/pickle/nyc_network_graph.pkl'
@@ -19,23 +17,21 @@ SCORE_PATH = 'data/results/'
 AC_NETWORK_PATH = 'data/a3c/saved_networks'
 SAVE_SUMMARY_PATH = 'data/a3c/summary'
 
-NUM_TRIPS = 12000000
-DURATION = 1600
+NUM_WORKERS = 3
+NUM_TRIPS = 4000000
+DURATION = 450
 NUM_FLEETS = 8000
-# NO_OP_STEPS = 10  # Number of "do nothing" actions to be performed by the agent at the start of an episode
 CYCLE = 1
 ACTION_UPDATE_CYCLE = 15
 LOAD_MODEL = False
 
 DEMAND_FORECAST_INTERVAL = 30
 NETWORK_UPDATE_INTERVAL = 1
-SAVE_INTERVAL = 1000  # The frequency with which the network is saved
-# BATCH_SIZE = 64  # Mini batch size
-# NUM_BATCH = 2 # Number of batches
-DEMAND_UPDATE_INTERVAL = 15
+SAVE_INTERVAL = 500  # The frequency with which the network is saved
 SUMMARY_VARIABLES = ['Reward', 'Value', 'TD', 'Value Loss', 'Policy Loss', 'Entropy', 'Grad Norm', 'Var Norm']
-ST_MEMORY_SIZE = 300
+ST_MEMORY_SIZE = 100
 
+# global episode that is shared with all threads
 global_episode = 0
 
 
@@ -66,13 +62,13 @@ class Worker(object):
                     vehicles, requests, wait, reject, idle = self.env.step()
                     score = np.zeros(4)
                     # summary = np.zeros(8)
-                    experience = deque()
+                    experience = []
                     ex_size = 0
                     num_dispatch = 0
                     prev_t = 0
 
                     for t in range((DURATION - DEMAND_FORECAST_INTERVAL) / CYCLE):
-                        if t % DEMAND_UPDATE_INTERVAL == 0:
+                        if t % int(DEMAND_FORECAST_INTERVAL / 2) == 0:
                             future_requests = self.env.get_requests(num_steps=DEMAND_FORECAST_INTERVAL)
                             self.agent.update_future_demand(future_requests)
 
@@ -87,7 +83,8 @@ class Worker(object):
 
                         if ex_size >= ST_MEMORY_SIZE:
                             summary = self.agent.train(experience, sess)
-                            ex_size -= experience.popleft()['N']
+                            ex_size = 0
+                            experience = []
                             global_episode += 1
                             episode = global_episode
                             summary_str = sess.run(summary_op, feed_dict={
@@ -104,13 +101,8 @@ class Worker(object):
                             # idle_time = score[3] / float(len(vehicles)) / duration
                             num_dispatch /= duration
                             s = "{:s} t={:d} EP={:d} // RQ: {:.0f} / DSP: {:.0f} / RWD: {:.1f} / VAL: {:.1f} / ADV: {:.1f} / vL: {:.0f} / pL: {:.0f} / ENT: {:.0f}"
-                            print(s.format(self.name[-1], t, episode, num_request, num_dispatch, *summary[:6]))
+                            print(s.format(self.name, t, episode, num_request, num_dispatch, *summary[:6]))
 
-                            # score[2] /= float(score[0] - score[3]) + 1e-6
-                            # score[3] /= float(score[0]) + 1e-6
-                            # score[4] /= float(NUM_FLEETS)
-                            # s = "{:s}: t={:d}, EP={:d} // RQ: {:.0f} / RP: {:.0f} / AW: {:.2f} / RR: {:.2f} / ID: {:.2f}"
-                            # print(s.format(self.name, t, episode, *(score.tolist())))
                             if t - prev_t >= NETWORK_UPDATE_INTERVAL:
                                 sess.run(self.update_local_ops)
 
@@ -136,25 +128,25 @@ def main():
         G = pickle.load(f)
     with open(ETA_MODEL_PATH, 'r') as f:
         eta_model = pickle.load(f)
-    eta_model.n_jobs = 1
+    eta_model.n_jobs = 3
 
     geohash_table = pd.read_csv(GEOHASH_TABLE_PATH, index_col='geohash')
     tf.reset_default_graph()
 
     with tf.device("/cpu:0"):
         _, _, _, _, global_network = AC_Network('global')  # Generate global network
-        num_workers = multiprocessing.cpu_count()  # Set workers ot number of available CPU threads
         trip_chunks = load_trip_chunks(TRIP_PATH, NUM_TRIPS, DURATION)
         workers = []
 
-        for i in range(num_workers):
+        for i in range(NUM_WORKERS):
             name = 'worker_' + str(i)
-            trips, dayofweek, minofday, duration = trip_chunks[i]
+            trips, date, dayofweek, minofday = trip_chunks[i]
             num_fleets = int(np.sqrt(len(trips) / DURATION / 300.0) * NUM_FLEETS)
-            print i, num_fleets
+            print('({:s}) #fleet: {:d} / #requests: {:d} / data: {:d} / dayofweek: {:d} / minofday / {:d}').format(
+                name, num_fleets, len(trips), date, dayofweek, minofday)
             env = FleetSimulator(G.copy(), eta_model, CYCLE, ACTION_UPDATE_CYCLE)
             env.reset(num_fleets, trips, dayofweek, minofday)
-            agent = Agent(geohash_table.copy(), CYCLE, ACTION_UPDATE_CYCLE, name, training=True)
+            agent = Agent(geohash_table.copy(), CYCLE, ACTION_UPDATE_CYCLE, DEMAND_FORECAST_INTERVAL, name, training=True)
             agent.reset(None, env.dayofweek, env.minofday)
             worker = Worker(name, env, agent)
             workers.append(worker)
