@@ -74,8 +74,8 @@ def AC_Network(scope):
         legal_z = Flatten()(merge([z, legal], mode='sum'))
         policy = Activation('softmax')(legal_z)
 
-        v = AveragePooling2D(pool_size=(3, 3))(x)
-        v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(v)
+        # v = AveragePooling2D(pool_size=(3, 3))(x)
+        v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
         v = Flatten()(v)
         v = Dense(32, activation='relu', name='value/dense_1')(v)
         value = Dense(1, name='value/dense_2')(v)

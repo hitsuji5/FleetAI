@@ -7,7 +7,7 @@ import tensorflow as tf
 from collections import deque
 from keras.models import Model
 from keras.layers import Input, Flatten, Dense, merge, Reshape, Activation, Convolution2D, \
-    AveragePooling2D, Cropping2D, Lambda
+    AveragePooling2D, MaxPooling2D, Cropping2D, Lambda
 from keras import backend as K
 
 KERAS_BACKEND = 'tensorflow'
@@ -87,6 +87,7 @@ def build_q_network():
     x = Convolution2D(128, 3, 3, activation='relu', name='shared/conv_4')(x)
 
     v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
+    v = MaxPooling2D(pool_size=(3, 3))(v)
     v = Flatten()(v)
     v = Dense(32, activation='relu', name='value/dense_1')(v)
     v = Dense(1, name='value/dense_2')(v)
@@ -338,11 +339,13 @@ class Agent(object):
         dispatch = []
         actions = []
         xy_idle = [(x, y) for y in range(MAP_HEIGHT) for x in range(MAP_WIDTH) if env_state[-1][x, y] > 0]
-        xy2index = {(x, y):i for i, (x, y) in enumerate(xy_idle)}
-        aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, xy_idle))
-        main_features = np.float32(self.create_main_feature(env_state, xy_idle))
-        aids = np.argmax(self.q_values.eval(feed_dict={
-                self.s: np.float32(main_features), self.x: np.float32(aux_features)}), axis=1)
+
+        if not self.training or self.epsilon < 1:
+            xy2index = {(x, y):i for i, (x, y) in enumerate(xy_idle)}
+            aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, xy_idle))
+            main_features = np.float32(self.create_main_feature(env_state, xy_idle))
+            aids = np.argmax(self.q_values.eval(feed_dict={
+                    self.s: np.float32(main_features), self.x: np.float32(aux_features)}), axis=1)
 
         for vid, (x, y) in resource[['x', 'y']].iterrows():
             if not self.training or self.epsilon < np.random.random():
