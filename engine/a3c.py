@@ -6,7 +6,7 @@ import pandas as pd
 import tensorflow as tf
 from keras.models import Model
 from keras.layers import Input, Flatten, Dense, merge, Reshape, Activation, Convolution2D, \
-    AveragePooling2D, Cropping2D, Lambda
+    AveragePooling2D, MaxPooling2D, Cropping2D, Lambda
 
 
 
@@ -76,6 +76,7 @@ def AC_Network(scope):
 
         # v = AveragePooling2D(pool_size=(3, 3))(x)
         v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
+        v = MaxPooling2D(pool_size=(3, 3))(v)
         v = Flatten()(v)
         v = Dense(32, activation='relu', name='value/dense_1')(v)
         value = Dense(1, name='value/dense_2')(v)
