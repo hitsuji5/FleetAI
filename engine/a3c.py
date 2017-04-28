@@ -31,10 +31,9 @@ MAX_MOVE = 7
 OUTPUT_LENGTH = 15
 STAY_ACTION = OUTPUT_LENGTH * OUTPUT_LENGTH / 2
 BATCH_SIZE = 128
-SAMPLE_PER_FRAME = 4
 MAX_DISPATCH = 64
 BETA = 0.01
-GAMMA = 0.90  # Discount factor
+GAMMA = 0.99  # Discount factor
 GRAD_CLIP = 40.0
 LEARNING_RATE = 0.00025
 # DECAY = 0.99
@@ -211,14 +210,32 @@ class Agent(object):
         if not self.training:
             self.update_demand(requests)
         env_state, resource = self.preprocess(vehicles)
-        experience = self.get_experience(vehicles, env_state)
+        # experience = self.get_experience(vehicles, env_state)
 
         if len(resource.index) > 0:
             actions = self.run_policy(env_state, resource, sess)
         else:
             actions = []
 
-        return actions, experience
+        return actions
+
+    def get_experience(self, vehicles):
+        self.update_time()
+        if len(self.state_buffer) == 0:
+            return None
+
+        if (self.state_buffer[0]['minofday'] + self.cycle) % 1440 != self.minofday:
+            return None
+
+        env_state, _ = self.preprocess(vehicles)
+        experience = self.state_buffer.popleft()
+        vdata = vehicles.loc[experience['vid'], ['geohash', 'reward', 'eta']]
+
+        experience['reward'] = vdata['reward'].values.astype(np.float32) - experience['reward']
+        experience['delay'] = np.round(vdata['eta'].values).astype(np.uint8)
+        experience['next_pos'] = self.geo_table.loc[vdata['geohash'], ['x', 'y']].values.astype(np.uint8)
+        experience['next_env'] = env_state
+        return experience
 
 
     def preprocess(self, vehicles):
@@ -333,65 +350,77 @@ class Agent(object):
 
         return aux_features
 
-    def get_experience(self, vehicles, env_state):
-        if len(self.state_buffer) == 0:
-            return None
-
-        if (self.state_buffer[0]['minofday'] + self.cycle) % 1440 != self.minofday:
-            return None
-
-        experience = self.state_buffer.popleft()
-        vdata = vehicles.loc[experience['vid'], ['geohash', 'reward', 'eta']]
-
-        experience['reward'] = vdata['reward'].values.astype(np.float32) - experience['reward']
-        experience['delay'] = np.round(vdata['eta'].values / self.cycle).astype(np.uint8)
-        experience['next_pos'] = self.geo_table.loc[vdata['geohash'], ['x', 'y']].values.astype(np.uint8)
-        experience['next_env'] = env_state
-        return experience
-
 
     def train(self, experience, sess):
-        main = []
-        aux = []
-        action = []
-        reward = []
-        next_main = []
-        next_aux = []
-        delay = []
-        value = []
-        weights = np.array([e['N'] for e in experience], dtype=np.float32)
-        memory_index = np.random.choice(range(len(experience)), size=BATCH_SIZE / SAMPLE_PER_FRAME, p=weights/weights.sum())
-        for i in memory_index:
-            d = experience[i]
-            samples = np.random.randint(d['N'], size=SAMPLE_PER_FRAME)
-            aux += self.create_aux_feature(d['minofday'], d['dayofweek'], d['pos'][samples])
-            next_aux += self.create_aux_feature(d['minofday'] + self.cycle, d['dayofweek'], d['next_pos'][samples])
-            main += self.create_main_feature(d['env'], d['pos'][samples])
-            next_main += self.create_main_feature(d['next_env'], d['next_pos'][samples])
-            action += d['action'][samples].tolist()
-            reward += d['reward'][samples].tolist()
-            delay += d['delay'][samples].tolist()
-            value += d['value'][samples].tolist()
-        next_value = sess.run(self.value,
+        main_batch = []
+        aux_batch = []
+        action_batch = []
+        reward_batch = []
+        next_main_batch = []
+        next_aux_batch = []
+        delay_batch = []
+        value_batch = []
+        for d in experience:
+            aux_batch += self.create_aux_feature(d['minofday'], d['dayofweek'], d['pos'])
+            next_aux_batch += self.create_aux_feature(d['minofday'] + self.cycle, d['dayofweek'], d['next_pos'])
+            main_batch += self.create_main_feature(d['env'], d['pos'])
+            next_main_batch += self.create_main_feature(d['next_env'], d['next_pos'])
+            action_batch += d['action'].tolist()
+            reward_batch += d['reward'].tolist()
+            delay_batch += d['delay'].tolist()
+            value_batch += d['value'].tolist()
+
+
+        # weights = np.array([e['N'] for e in experience], dtype=np.float32)
+        # memory_index = np.random.choice(range(len(experience)), size=BATCH_SIZE / SAMPLE_PER_FRAME, p=weights/weights.sum())
+        # for i in memory_index:
+        #     d = experience[i]
+        #     samples = np.random.randint(d['N'], size=SAMPLE_PER_FRAME)
+        #     aux += self.create_aux_feature(d['minofday'], d['dayofweek'], d['pos'][samples])
+        #     next_aux += self.create_aux_feature(d['minofday'] + self.cycle, d['dayofweek'], d['next_pos'][samples])
+        #     main += self.create_main_feature(d['env'], d['pos'][samples])
+        #     next_main += self.create_main_feature(d['next_env'], d['next_pos'][samples])
+        #     action += d['action'][samples].tolist()
+        #     reward += d['reward'][samples].tolist()
+        #     delay += d['delay'][samples].tolist()
+        #     value += d['value'][samples].tolist()
+        next_value_batch = sess.run(self.value,
             feed_dict={
-                self.main_input: np.array(next_main),
-                self.aux_input: np.array(next_aux)
+                self.main_input: np.array(next_main_batch),
+                self.aux_input: np.array(next_aux_batch)
             })[:, 0]
-        target_v = np.array(reward) + GAMMA ** (1 + np.array(delay)) * next_value
-        td = target_v - value
-        feed_dict = {self.main_input: np.float32(main),
-                     self.aux_input: np.float32(aux),
-                     self.actions: np.array(action),
-                     self.target_v: target_v,
-                     self.td: td}
-        v_l, p_l, e_l, g_n, v_n, _ = sess.run([self.value_loss,
-                                               self.policy_loss,
-                                               self.entropy,
-                                               self.grad_norms,
-                                               self.var_norms,
-                                               self.apply_grads],
-                                              feed_dict=feed_dict)
-        return [np.mean(reward), np.mean(value), np.mean(td), v_l, p_l, e_l, g_n, v_n]
+        target_v_batch = np.array(reward_batch) + GAMMA ** (self.cycle + np.array(delay_batch)) * next_value_batch
+        td_batch = target_v_batch - value_batch
+        N = len(action_batch)
+        num_batch = N / BATCH_SIZE
+        p = np.random.permutation(N)
+        main_batch = np.float32(main_batch)[p]
+        aux_batch = np.float32(aux_batch)[p]
+        action_batch = np.array(action_batch)[p]
+        target_v_batch = target_v_batch[p]
+        td_batch = td_batch[p]
+        batch = [(main_batch[k:k + BATCH_SIZE], aux_batch[k:k + BATCH_SIZE], action_batch[k:k + BATCH_SIZE],
+                    target_v_batch[k:k + BATCH_SIZE], td_batch[k:k + BATCH_SIZE])
+                   for k in xrange(0, BATCH_SIZE * num_batch, BATCH_SIZE)]
+
+        for main, aux, action, v, td in batch:
+            feed_dict = {self.main_input: main,
+                         self.aux_input: aux,
+                         self.actions: action,
+                         self.target_v: v,
+                         self.td: td}
+            _ = sess.run(self.apply_grads, feed_dict=feed_dict)
+        feed_dict = {self.main_input: main_batch,
+                    self.aux_input: aux_batch,
+                    self.actions: action_batch,
+                    self.target_v: target_v_batch,
+                    self.td: td_batch}
+        v_l, p_l, e_l, v_n = sess.run([self.value_loss,
+                                           self.policy_loss,
+                                           self.entropy,
+                                           self.var_norms],
+                                          feed_dict=feed_dict)
+        return [np.mean(reward_batch), np.mean(value_batch), np.mean(td_batch), v_l/N, p_l/N, e_l/N, v_n]
 
     def build_d_network(self):
         input = Input(shape=(6, 212, 219), dtype='float32')

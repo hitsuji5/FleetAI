@@ -19,17 +19,15 @@ SAVE_SUMMARY_PATH = 'data/a3c/summary'
 
 NUM_WORKERS = 8
 NUM_TRIPS = 12000000
-DURATION = 1600
+DURATION = 1200
 NUM_FLEETS = 8000
 CYCLE = 1
 ACTION_UPDATE_CYCLE = 15
 LOAD_MODEL = False
 
 DEMAND_FORECAST_INTERVAL = 30
-NETWORK_UPDATE_INTERVAL = 1
-SAVE_INTERVAL = 500  # The frequency with which the network is saved
-SUMMARY_VARIABLES = ['Reward', 'Value', 'TD', 'Value Loss', 'Policy Loss', 'Entropy', 'Grad Norm', 'Var Norm']
-ST_MEMORY_SIZE = 100
+SAVE_INTERVAL = 100  # The frequency with which the network is saved
+SUMMARY_VARIABLES = ['Reward', 'Value', 'TD', 'Value Loss', 'Policy Loss', 'Entropy', 'Var Norm']
 
 # global episode that is shared with all threads
 global_episode = 0
@@ -58,61 +56,48 @@ class Worker(object):
         with sess.as_default(), sess.graph.as_default():
             try:
                 while not coord.should_stop():
-                    sess.run(self.update_local_ops)
                     vehicles, requests, wait, reject, idle = self.env.step()
-                    score = np.zeros(4)
-                    # summary = np.zeros(8)
-                    experience = []
-                    ex_size = 0
-                    num_dispatch = 0
-                    prev_t = 0
 
-                    for t in range((DURATION - DEMAND_FORECAST_INTERVAL) / CYCLE):
-                        if t % int(DEMAND_FORECAST_INTERVAL / 2) == 0:
-                            future_requests = self.env.get_requests(num_steps=DEMAND_FORECAST_INTERVAL)
-                            self.agent.update_future_demand(future_requests)
+                    for t in range((DURATION - DEMAND_FORECAST_INTERVAL) / ACTION_UPDATE_CYCLE / 2.0):
+                        assert len(self.agent.state_buffer) == 0
+                        experience = []
+                        score = np.zeros(5)
+                        sess.run(self.update_local_ops)
 
-                        actions, ex = self.agent.get_actions(vehicles, requests, sess)
-                        vehicles, requests, wait, reject, idle = self.env.step(actions)
-                        score += np.array([len(requests), wait, reject, idle])
+                        future_requests = self.env.get_requests(num_steps=DEMAND_FORECAST_INTERVAL)
+                        self.agent.update_future_demand(future_requests)
 
-                        num_dispatch += len(actions)
-                        if ex:
-                            experience.append(ex)
-                            ex_size += ex['N']
+                        for _ in range(ACTION_UPDATE_CYCLE):
+                            actions = self.agent.get_actions(vehicles, requests, sess)
+                            vehicles, requests, wait, reject, idle = self.env.step(actions)
+                            score += np.array([len(requests), wait, reject, idle, len(actions)])
 
-                        if ex_size >= ST_MEMORY_SIZE:
-                            summary = self.agent.train(experience, sess)
-                            ex_size = 0
-                            experience = []
-                            global_episode += 1
-                            episode = global_episode
-                            summary_str = sess.run(summary_op, feed_dict={
-                                summary_placeholders[i]: summary[i]
-                                for i in range(len(summary))
-                            })
-                            summary_writer.add_summary(summary_str, episode)
-                            summary_writer.flush()
+                        for _ in range(ACTION_UPDATE_CYCLE):
+                            ex = self.agent.get_experience(vehicles)
+                            vehicles, _, _, _, _ = self.env.step()
+                            if ex:
+                                experience.append(ex)
 
-                            #DEBUG
-                            duration = float(t - prev_t)
-                            num_request = score[0] / duration
-                            # reject_rate = score[2] / (float(score[0]) + 1e-6)
-                            # idle_time = score[3] / float(len(vehicles)) / duration
-                            num_dispatch /= duration
-                            s = "{:s} t={:d} EP={:d} // RQ: {:.0f} / DSP: {:.0f} / RWD: {:.1f} / VAL: {:.1f} / ADV: {:.1f} / vL: {:.0f} / pL: {:.0f} / ENT: {:.0f}"
-                            print(s.format(self.name, t, episode, num_request, num_dispatch, *summary[:6]))
+                        summary = self.agent.train(experience, sess)
+                        global_episode += 1
+                        episode = global_episode
+                        summary_str = sess.run(summary_op, feed_dict={
+                            summary_placeholders[i]: summary[i]
+                            for i in range(len(summary))
+                        })
+                        summary_writer.add_summary(summary_str, episode)
+                        summary_writer.flush()
 
-                            if t - prev_t >= NETWORK_UPDATE_INTERVAL:
-                                sess.run(self.update_local_ops)
+                        #DEBUG
+                        num_request = score[0] / ACTION_UPDATE_CYCLE
+                        reject_rate = score[2] / (float(score[0]) + 1e-6)
+                        num_dispatch = score[4] / ACTION_UPDATE_CYCLE
+                        s = "{:s} t={:d} EP={:d} // RQ: {:.0f} / RR: {:.2f} / DSP: {:.0f} / RWD: {:.1f} / VAL: {:.1f} / ADV: {:.1f} / vL: {:.0f} / pL: {:.0f} / ENT: {:.0f}"
+                        print(s.format(self.name, t, episode, num_request, reject_rate, num_dispatch, *summary[:6]))
 
-                            if episode % SAVE_INTERVAL == 0:
-                                saver.save(sess, AC_NETWORK_PATH + '/ac', global_step=episode)
-                                print("saved model")
-
-                            num_dispatch = 0
-                            score = np.zeros(4)
-                            prev_t = t
+                        if episode % SAVE_INTERVAL == 0:
+                            saver.save(sess, AC_NETWORK_PATH + '/ac', global_step=episode)
+                            print("saved model")
 
 
                     print("STOP {:s}").format(self.name)
