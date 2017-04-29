@@ -193,9 +193,9 @@ class Agent(object):
             self.load_network()
 
         # Initialize target network
-        self.sess.run(self.update_target_network)
-
-        if not self.training:
+        if self.training:
+            self.sess.run(self.update_target_network)
+        else:
             self.demand_model = build_d_network()
             self.demand_model.load_weights(DEMAND_MODEL_PATH)
 
