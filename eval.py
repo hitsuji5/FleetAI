@@ -2,13 +2,13 @@ import pandas as pd
 import cPickle as pickle
 from engine.simulator import FleetSimulator
 # from engine.lp import Agent
-from engine.dqn import Agent
+from engine.dqn_v3 import Agent
 # from engine.dqn_classic import Agent
 # from keras.models import model_from_json
 from experiment import run, load_trip_eval, describe
 
 GRAPH_PATH = 'data/pickle/nyc_network_graph.pkl'
-TRIP_PATH = 'data/nyc_taxi/trips_2016-05.csv'
+TRIP_PATH = 'data/nyc_taxi/trips_2016-06.csv'
 DEMAND_MODEL_PATH = 'data/model/demand/'
 ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
 GEOHASH_TABLE_PATH = 'data/table/zones.csv'
@@ -16,11 +16,11 @@ ETA_TABLE_PATH = 'data/table/eta.csv'
 PDEST_TABLE_PATH = 'data/table/pdest.csv'
 SCORE_PATH = 'data/results/'
 
-NUM_TRIPS = 500000
+NUM_TRIPS = 5000000
 NUM_FLEETS = 8000
 NO_OP_STEPS = 30
 CYCLE = 1
-ACTION_UPDATE_CYCLE = 10
+ACTION_UPDATE_CYCLE = 15
 # NO_OP_STEPS = 2
 # CYCLE = 15
 # ACTION_UPDATE_CYCLE = 15
@@ -45,7 +45,7 @@ def main():
 
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
     # agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE)
-    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, training=False, load_netword=False)
+    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, 30, training=False, load_netword=True)
 
 
     trip_chunks = load_trip_eval(TRIP_PATH, NUM_TRIPS)
@@ -55,7 +55,7 @@ def main():
         print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d}".format(
             episode, date, env.dayofweek, env.minofday
         ))
-        score, vscore = run(env, agent, NUM_STEPS, average_cycle=30)
+        score, vscore = run(env, agent, NUM_STEPS, no_op_steps=30, average_cycle=30)
         describe(score)
         score.to_csv(SCORE_PATH + 'score' + str(dayofweek) + '.csv', index=False)
         vscore.to_csv(SCORE_PATH + 'vscore' + str(dayofweek) + '.csv', index=False)
