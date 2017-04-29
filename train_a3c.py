@@ -58,7 +58,7 @@ class Worker(object):
                 while not coord.should_stop():
                     vehicles, requests, wait, reject, idle = self.env.step()
 
-                    for t in range((DURATION - DEMAND_FORECAST_INTERVAL) / ACTION_UPDATE_CYCLE / 2.0):
+                    for t in range((DURATION - DEMAND_FORECAST_INTERVAL) / ACTION_UPDATE_CYCLE / 2):
                         assert len(self.agent.state_buffer) == 0
                         experience = []
                         score = np.zeros(5)

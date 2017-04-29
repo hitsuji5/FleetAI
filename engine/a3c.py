@@ -32,9 +32,10 @@ OUTPUT_LENGTH = 15
 STAY_ACTION = OUTPUT_LENGTH * OUTPUT_LENGTH / 2
 BATCH_SIZE = 128
 MAX_DISPATCH = 64
-BETA = 0.01
+LAMBDA = 2.0
+BETA = 0.1
 GAMMA = 0.99  # Discount factor
-GRAD_CLIP = 40.0
+GRAD_CLIP = 100.0
 LEARNING_RATE = 0.00025
 # DECAY = 0.99
 # MOMENTUM = 0.0  # Momentum used by RMSProp
@@ -137,7 +138,7 @@ class Agent(object):
         self.value_loss = 0.5 * tf.reduce_sum(tf.square(self.target_v - tf.reshape(self.value, [-1])))
         self.entropy = -tf.reduce_sum(self.policy * log_pi)
         self.policy_loss = -tf.reduce_sum(tf.reduce_sum(log_pi * self.actions_onehot, [1]) * self.td)
-        self.loss = 0.5 * self.value_loss + self.policy_loss - self.entropy * BETA
+        self.loss = LAMBDA * self.value_loss + self.policy_loss - self.entropy * BETA
 
         # Get gradients from local network using local losses
         local_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, name)
@@ -416,10 +417,10 @@ class Agent(object):
                     self.target_v: target_v_batch,
                     self.td: td_batch}
         v_l, p_l, e_l, v_n = sess.run([self.value_loss,
-                                           self.policy_loss,
-                                           self.entropy,
-                                           self.var_norms],
-                                          feed_dict=feed_dict)
+                                       self.policy_loss,
+                                       self.entropy,
+                                       self.var_norms],
+                                      feed_dict=feed_dict)
         return [np.mean(reward_batch), np.mean(value_batch), np.mean(td_batch), v_l/N, p_l/N, e_l/N, v_n]
 
     def build_d_network(self):
