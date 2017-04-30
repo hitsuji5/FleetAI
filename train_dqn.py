@@ -36,7 +36,7 @@ def main():
 
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
     agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, DEMAND_FORECAST_INTERVAL,
-                  training=True, load_netword=LOAD_NETWORK)
+                  training=True, load_network=LOAD_NETWORK)
     if INITIAL_MEMORY:
         with open(INITIAL_MEMORY_PATH, 'r') as f:
             ex_memory = pickle.load(f)

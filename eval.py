@@ -45,7 +45,7 @@ def main():
 
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
     # agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE)
-    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, 30, training=False, load_netword=True)
+    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, 30, training=False, load_network=True)
 
 
     trip_chunks = load_trip_eval(TRIP_PATH, NUM_TRIPS)

@@ -108,7 +108,7 @@ def build_q_network():
 
 
 class Agent(object):
-    def __init__(self, geohash_table, time_step, cycle, demand_cycle, training=True, load_netword=False):
+    def __init__(self, geohash_table, time_step, cycle, demand_cycle, training=True, load_network=False):
         self.geo_table = geohash_table
         self.time_step = time_step
         self.cycle = cycle
@@ -189,7 +189,7 @@ class Agent(object):
         self.sess.run(tf.initialize_all_variables())
 
         # Load network
-        if load_netword:
+        if load_network:
             self.load_network()
 
         # Initialize target network
