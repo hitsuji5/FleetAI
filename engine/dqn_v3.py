@@ -264,7 +264,10 @@ class Agent(object):
                     self.beta += self.beta_step
 
         if len(resource.index) > 0:
-            actions = self.run_policy(env_state, resource)
+            if self.training:
+                actions = self.e_greedy(env_state, resource)
+            else:
+                actions = self.run_policy(env_state, resource)
         else:
             actions = []
 
@@ -335,12 +338,12 @@ class Agent(object):
 
         return env_state, R_idle
 
-    def run_policy(self, env_state, resource):
+    def e_greedy(self, env_state, resource):
         dispatch = []
         actions = []
         xy_idle = [(x, y) for y in range(MAP_HEIGHT) for x in range(MAP_WIDTH) if env_state[-1][x, y] > 0]
 
-        if not self.training or self.epsilon < 1:
+        if self.epsilon < 1:
             xy2index = {(x, y):i for i, (x, y) in enumerate(xy_idle)}
             aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, xy_idle))
             main_features = np.float32(self.create_main_feature(env_state, xy_idle))
@@ -348,7 +351,7 @@ class Agent(object):
                     self.s: np.float32(main_features), self.x: np.float32(aux_features)}), axis=1)
 
         for vid, (x, y) in resource[['x', 'y']].iterrows():
-            if not self.training or self.epsilon < np.random.random():
+            if self.epsilon < np.random.random():
                 aid = aids[xy2index[(x, y)]]
             else:
                 aid = STAY_ACTION if self.beta >= np.random.random() else np.random.randint(self.num_actions)
@@ -364,21 +367,55 @@ class Agent(object):
                         lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
                         dispatch.append((vid, (lat, lon)))
                         action = aid
-            if self.training:
-                actions.append(action)
+            actions.append(action)
 
-        if self.training:
-            state_dict = {}
-            state_dict['minofday'] = self.minofday
-            state_dict['dayofweek'] = self.dayofweek
-            state_dict['vid'] = resource.index
-            state_dict['env'] = env_state
-            state_dict['pos'] = resource[['x', 'y']].values.astype(np.uint8)
-            state_dict['reward'] = resource['reward'].values.astype(np.float32)
-            state_dict['action'] = np.uint8(actions)
-            self.state_buffer.append(state_dict)
+        state_dict = {}
+        state_dict['minofday'] = self.minofday
+        state_dict['dayofweek'] = self.dayofweek
+        state_dict['vid'] = resource.index
+        state_dict['env'] = env_state
+        state_dict['pos'] = resource[['x', 'y']].values.astype(np.uint8)
+        state_dict['reward'] = resource['reward'].values.astype(np.float32)
+        state_dict['action'] = np.uint8(actions)
+        self.state_buffer.append(state_dict)
 
         return dispatch
+
+
+    def run_policy(self, env_state, resource):
+        dispatch = []
+        W, X, X1, X2, X_idle = env_state
+        xy_idle = [(x, y) for y in range(MAP_HEIGHT) for x in range(MAP_WIDTH) if X_idle[x, y] > 0]
+        xy2index = {(x, y): i for i, (x, y) in enumerate(xy_idle)}
+        aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, xy_idle))
+
+        for vid, (x, y) in resource[['x', 'y']].iterrows():
+            aux_feature = aux_features[[xy2index[(x, y)]]]
+            # aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, [(x, y)]))
+            main_feature = np.float32(self.create_main_feature(env_state, [(x, y)]))
+            aid = np.argmax(self.q_values.eval(feed_dict={
+                    self.s: np.float32(main_feature), self.x: np.float32(aux_feature)}), axis=1)[0]
+            new_x, new_y = x, y
+            if aid != STAY_ACTION:
+                move_x, move_y = self.action_space[aid]
+                x_ = x + move_x
+                y_ = y + move_y
+                if x_ >= 0 and x_ < MAP_WIDTH and y_ >= 0 and y_ < MAP_HEIGHT:
+                    g = self.xy2g[x_][y_]
+                    if len(g) > 0:
+                        gmin = self.geo_table.loc[g, 'ratio'].argmin()
+                        lat, lon = self.geo_table.loc[gmin, ['lat', 'lon']]
+                        dispatch.append((vid, (lat, lon)))
+                        new_x, new_y = x_, y_
+            X1[x, y] -= 1.0 / X_SCALE
+            X2[x, y] -= 1.0 / X_SCALE
+            X_idle[x, y] -= 1.0 / X_SCALE
+            X1[new_x, new_y] += 1.0 / X_SCALE
+            X2[new_x, new_y] += 1.0 / X_SCALE
+
+        return dispatch
+
+
 
     def create_main_feature(self, env_state, positions):
         features = [[pad_crop(s, x, y, MAIN_LENGTH) for s in env_state]
