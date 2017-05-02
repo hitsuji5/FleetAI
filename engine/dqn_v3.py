@@ -28,7 +28,7 @@ MAP_WIDTH = int((LONGITUDE_MAX - LONGITUDE_MIN) / LONGITUDE_DELTA) + 1
 MAP_HEIGHT = int((LATITUDE_MAX - LATITUDE_MIN) / LATITUDE_DELTA) + 1
 MAIN_LENGTH = 51
 MAIN_DEPTH = 5
-AUX_LENGTH = 23
+AUX_LENGTH = 15 #23
 AUX_DEPTH = 11
 MAX_MOVE = 7
 OUTPUT_LENGTH = 15
@@ -40,14 +40,14 @@ INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.05  # Final value of epsilon in epsilon-greedy
 INITIAL_BETA = 0.70 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
-INITIAL_REPLAY_SIZE = 1000  # Number of steps to populate the replay memory before training starts
-NUM_REPLAY_MEMORY = 5000  # Number of replay memory the agent uses for training
+INITIAL_REPLAY_SIZE = 2000  # Number of steps to populate the replay memory before training starts
+NUM_REPLAY_MEMORY = 10000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
-BATCH_SIZE = 128  # Mini batch size
-NUM_BATCH = 4 # Number of batches
+BATCH_SIZE = 64  # Mini batch size
+NUM_BATCH = 2 # Number of batches
 SAMPLE_PER_FRAME = 2
-TARGET_UPDATE_INTERVAL = 60  # The frequency with which the target network is updated
-SUMMARY_INTERVAL = 30
+TARGET_UPDATE_INTERVAL = 150  # The frequency with which the target network is updated
+SUMMARY_INTERVAL = 60
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
@@ -80,11 +80,19 @@ def build_q_network():
     ave2 = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(ave)
     gra = Cropping2D(cropping=((c * 2, c * 2), (c * 2, c * 2)))(main_input)
 
-    merged = merge([gra, ave1, ave2, aux_input], mode='concat', concat_axis=1)
-    x = Convolution2D(16, 1, 1, activation='relu', name='shared/conv_1')(merged)
-    x = Convolution2D(32, 5, 5, activation='relu', name='shared/conv_2')(x)
-    x = Convolution2D(64, 3, 3, activation='relu', name='shared/conv_3')(x)
-    x = Convolution2D(128, 3, 3, activation='relu', name='shared/conv_4')(x)
+    # merged = merge([gra, ave1, ave2, aux_input], mode='concat', concat_axis=1)
+    # x = Convolution2D(16, 1, 1, activation='relu', name='shared/conv_1')(merged)
+    # x = Convolution2D(32, 5, 5, activation='relu', name='shared/conv_2')(x)
+    # x = Convolution2D(64, 3, 3, activation='relu', name='shared/conv_3')(x)
+    # x = Convolution2D(128, 3, 3, activation='relu', name='shared/conv_4')(x)
+
+    merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
+    x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
+    x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
+    main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
+    merge2 = merge([main_output, aux_input], mode='concat', concat_axis=1)
+    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merge2)
+    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
 
     v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
     v = MaxPooling2D(pool_size=(3, 3))(v)
@@ -99,7 +107,8 @@ def build_q_network():
     advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(z)
 
     q_values = merge([value, advantage], mode='sum')
-    legal = Flatten()(Lambda(lambda a: a[:, -1:, 4:19, 4:19])(aux_input))
+    # legal = Flatten()(Lambda(lambda a: a[:, -1:, 4:19, 4:19])(aux_input))
+    legal = Flatten()(Lambda(lambda a: a[:, -1:, :, :])(aux_input))
     q_values_legal = merge([q_values, legal], mode='mul')
 
     model = Model(input=[main_input, aux_input], output=q_values_legal)
@@ -323,11 +332,13 @@ class Agent(object):
         self.geo_table['ratio'] = self.geo_table.X / float(self.geo_table.X.sum() + 1) - self.geo_table.W / float(self.geo_table.W.sum() + 1)
 
         self.df['W'] = self.geo_table.groupby(['x', 'y'])['W'].sum()
-        self.df['X'] = R.groupby(['x', 'y'])['available'].count().astype(int)
-        self.df['X1'] = R1.groupby(['x', 'y'])['available'].count().astype(int)
-        self.df['X2'] = R2.groupby(['x', 'y'])['available'].count().astype(int)
-        self.df['X_idle'] = R_idle.groupby(['x', 'y'])['available'].count().astype(int)
+        self.df['X'] = R.groupby(['x', 'y'])['available'].count()
+        self.df['X1'] = R1.groupby(['x', 'y'])['available'].count()
+        self.df['X2'] = R2.groupby(['x', 'y'])['available'].count()
+        self.df['X_idle'] = R_idle.groupby(['x', 'y'])['available'].count()
         self.df = self.df.fillna(0)
+        self.df['X1'] -= self.df.W / 2.0
+        self.df['X2'] -= self.df.W
         df = self.df.reset_index()
         W = df.pivot(index='x', columns='y', values='W').fillna(0).values.astype(np.float32) / W_SCALE
         X = df.pivot(index='x', columns='y', values='X').fillna(0).values.astype(np.float32) / X_SCALE
@@ -391,7 +402,6 @@ class Agent(object):
 
         for vid, (x, y) in resource[['x', 'y']].iterrows():
             aux_feature = aux_features[[xy2index[(x, y)]]]
-            # aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, [(x, y)]))
             main_feature = np.float32(self.create_main_feature(env_state, [(x, y)]))
             aid = np.argmax(self.q_values.eval(feed_dict={
                     self.s: np.float32(main_feature), self.x: np.float32(aux_feature)}), axis=1)[0]

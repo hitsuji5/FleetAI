@@ -16,14 +16,14 @@ INITIAL_MEMORY = False
 LOAD_NETWORK = False
 
 NUM_TRIPS = 12000000
-DURATION = 400
+DURATION = 1200
 NUM_FLEETS = 8000
 NO_OP_STEPS = 0  # Number of "do nothing" actions to be performed by the agent at the start of an episode
 CYCLE = 1
 ACTION_UPDATE_CYCLE = 15
 DEMAND_FORECAST_INTERVAL = 30
 AVERAGE_CYCLE = 30
-NUM_EPISODES = 40
+NUM_EPISODES = 20
 
 def main():
     print("Loading models...")
@@ -31,6 +31,7 @@ def main():
         G = pickle.load(f)
     with open(ETA_MODEL_PATH, 'r') as f:
         eta_model = pickle.load(f)
+    num_fleets = NUM_FLEETS
 
     geohash_table = pd.read_csv(GEOHASH_TABLE_PATH, index_col='geohash')
 
@@ -44,7 +45,7 @@ def main():
 
     trip_chunks = load_trip_chunks(TRIP_PATH, NUM_TRIPS, DURATION)[:NUM_EPISODES]
     for episode, (trips, date, dayofweek, minofday) in enumerate(trip_chunks):
-        num_fleets = int(np.sqrt(len(trips)/120000.0) * NUM_FLEETS)
+        # num_fleets = int(np.sqrt(len(trips)/120000.0) * NUM_FLEETS)
         env.reset(num_fleets, trips, dayofweek, minofday)
         _, requests, _, _, _ = env.step()
         agent.reset(requests, env.dayofweek, env.minofday)
