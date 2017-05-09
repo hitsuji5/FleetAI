@@ -1,7 +1,9 @@
 import numpy as np
 import pulp
+# import cvxpy as cvx
 from scipy.stats import norm
 from collections import deque
+# import time
 
 GAMMA = 0.9
 ETA_ERROR = 3.0
@@ -117,9 +119,9 @@ class Agent(object):
         R = [state['R'+str(t)].values for t in range(self.T-1)]
         W = state.W.values
         status, objective, flows = self.LPsolve(X0, R, W, od_triptime, p_dest)
-        if status != 'Optimal':
-            print status
-            return None, state
+        # if status != 'Optimal':
+        #     print status
+        #     return None, state
 
         # Expected number of vehicles by geohash in next period without actions
         self.geo_table['X1'] = self.geo_table.X + self.geo_table.R0 - self.geo_table.W
@@ -173,6 +175,68 @@ class Agent(object):
                 if n <= 0:
                     break
         return locations
+
+
+    # def LPsolve(self, x0, r, w, od_triptime, p_dest):
+    #     T = self.T
+    #     cost = self.cost
+    #     penalty = self.penalty
+    #     N = od_triptime.shape[0]
+    #     zones = range(N)
+    #     o2d = [[j for j in range(N) if od_triptime[i, j] < MAX_MOVE_TIME and i != j]
+    #            for i in range(N)]
+    #     d2o = [[i for i in range(N) if od_triptime[i, j] < MAX_MOVE_TIME and i != j]
+    #            for j in range(N)]
+    #
+    #     p_eta = [norm.cdf(self.cycle * (t + 1), loc=od_triptime, scale=ETA_ERROR) for t in range(T)]
+    #     for t in range(T - 1, 0, -1):
+    #         p_eta[t] -= p_eta[t - 1]
+    #
+    #
+    #     start = time.time()
+    #     u = [{ (i, j): cvx.Variable() for i in range(N) for j in o2d[i]} for _ in range(T - 1)]
+    #     z = [[cvx.Variable() for _ in zones] for _ in range(T)]
+    #
+    #     obj = cvx.Minimize(sum(
+    #         [z[t][i] * penalty * GAMMA ** t for i in zones for t in range(T)]
+    #         + [u[t][(i, j)] * (cost + od_triptime[i, j]) * GAMMA ** t
+    #            for i in range(N) for j in o2d[i] for t in range(T - 1)]))
+    #     print('obj {:.0f}').format(time.time() - start)
+    #
+    #     constraints = [u[t][(i, j)] >= 0
+    #            for i in zones for j in o2d[i] for t in range(T - 1)]
+    #     constraints += [z[t][i] >= 0
+    #            for i in zones for t in range(T - 1)]
+    #     for i in zones:
+    #         x_ti = x0[i]
+    #         inflow_w = 0
+    #         constraints += [sum([u[0][(i, j)] for j in o2d[i]]) <= x0[i],
+    #                         z[0][i] >= -x0[i] + w[i]]
+    #         for t in range(1, T):
+    #             inflow_u = sum([u[t - 1][(j, i)] for j in d2o[i]])
+    #             outflow_u = sum([u[t - 1][(i, j)] for j in o2d[i]])
+    #             inflow_w_prev = inflow_w
+    #             inflow_w = sum(
+    #                 [(w[j] - z[tau][j]) * p_dest[j, i] * p_eta[t - tau - 1][j, i] for tau in range(t) for j in
+    #                  d2o[i]])
+    #             x_ti += - w[i] + r[t - 1][i] + z[t-1][i] + inflow_u - outflow_u + 0.5 * (
+    #             inflow_w_prev + inflow_w)
+    #             if t < T - 1:
+    #                 constraints += [sum([u[t][(i, j)] for j in o2d[i]]) <= x_ti]
+    #             constraints += [z[t][i] >= -x_ti + w[i]]
+    #     print('constraint {:.0f}').format(time.time() - start)
+    #
+    #
+    #     prob = cvx.Problem(obj, constraints)
+    #     prob.solve()
+    #     print('solve {:.0f}').format(time.time() - start)
+    #
+    #     output = np.zeros((N, N))
+    #     for i in range(N):
+    #         for j in o2d[i]:
+    #             output[i, j] = u[0][(i, j)].value
+    #
+    #     return prob.status, prob.value, output
 
 
     def LPsolve(self, x0, r, w, od_triptime, p_dest):

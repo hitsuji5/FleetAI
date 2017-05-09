@@ -8,7 +8,7 @@ from collections import deque
 from keras.models import Model
 from keras.layers import Input, Flatten, Dense, merge, Reshape, Activation, Convolution2D, \
     AveragePooling2D, MaxPooling2D, Cropping2D, Lambda
-from keras import backend as K
+# from keras import backend as K
 
 KERAS_BACKEND = 'tensorflow'
 DATA_PATH = 'data/dqn'
@@ -35,12 +35,12 @@ OUTPUT_LENGTH = 15
 STAY_ACTION = OUTPUT_LENGTH * OUTPUT_LENGTH / 2
 
 GAMMA = 0.9
-EXPLORATION_STEPS = 5000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
-INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
+EXPLORATION_STEPS = 500  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
+INITIAL_EPSILON = 0.10  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.05  # Final value of epsilon in epsilon-greedy
-INITIAL_BETA = 0.70 # Initial value of beta in epsilon-greedy
+INITIAL_BETA = 0.10 # Initial value of beta in epsilon-greedy
 FINAL_BETA = 0.0 # Final value of beta in epsilon-greedy
-INITIAL_REPLAY_SIZE = 2000  # Number of steps to populate the replay memory before training starts
+INITIAL_REPLAY_SIZE = 0  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 10000  # Number of replay memory the agent uses for training
 SAVE_INTERVAL = 1000  # The frequency with which the network is saved
 BATCH_SIZE = 64  # Mini batch size
@@ -69,52 +69,85 @@ def build_d_network():
     model = Model(input=input, output=output)
     return model
 
-
+# Version 3.3
 def build_q_network():
     main_input = Input(shape=(MAIN_DEPTH, MAIN_LENGTH, MAIN_LENGTH), dtype='float32')
     aux_input = Input(shape=(AUX_DEPTH, AUX_LENGTH, AUX_LENGTH), dtype='float32')
 
     c = OUTPUT_LENGTH / 2
-    ave = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(main_input)
+    sliced_input = Lambda(lambda x: x[:, :-1, :, :])(main_input)
+    ave = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(sliced_input)
     ave1 = Cropping2D(cropping=((c, c), (c, c)))(ave)
     ave2 = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(ave)
     gra = Cropping2D(cropping=((c * 2, c * 2), (c * 2, c * 2)))(main_input)
-
-    # merged = merge([gra, ave1, ave2, aux_input], mode='concat', concat_axis=1)
-    # x = Convolution2D(16, 1, 1, activation='relu', name='shared/conv_1')(merged)
-    # x = Convolution2D(32, 5, 5, activation='relu', name='shared/conv_2')(x)
-    # x = Convolution2D(64, 3, 3, activation='relu', name='shared/conv_3')(x)
-    # x = Convolution2D(128, 3, 3, activation='relu', name='shared/conv_4')(x)
 
     merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
     x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
     x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
     main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
-    merge2 = merge([main_output, aux_input], mode='concat', concat_axis=1)
-    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merge2)
-    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
+    aux_output = Convolution2D(16, 1, 1, activation='relu', name='ayx/conv')(aux_input)
+    merge2 = merge([main_output, aux_output], mode='concat', concat_axis=1)
+    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv')(merge2)
+    x = Convolution2D(1, 1, 1, name='main/q_value')(x)
+    z = Flatten()(x)
+    legal = Flatten()(Lambda(lambda x: x[:, -1:, :, :])(aux_input))
+    q_values = merge([z, legal], mode='mul')
 
-    v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
-    v = MaxPooling2D(pool_size=(3, 3))(v)
-    v = Flatten()(v)
-    v = Dense(32, activation='relu', name='value/dense_1')(v)
-    v = Dense(1, name='value/dense_2')(v)
-    value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
-                   output_shape=(OUTPUT_LENGTH*OUTPUT_LENGTH,), name='value/lambda')(v)
+    model = Model(input=[main_input, aux_input], output=q_values)
 
-    z = Convolution2D(1, 1, 1, name='advantage/conv')(x)
-    z = Flatten()(z)
-    advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(z)
+    return main_input, aux_input, q_values, model
 
-    q_values = merge([value, advantage], mode='sum')
-    # legal = Flatten()(Lambda(lambda a: a[:, -1:, 4:19, 4:19])(aux_input))
-    legal = Flatten()(Lambda(lambda a: a[:, -1:, :, :])(aux_input))
-    q_values_legal = merge([q_values, legal], mode='mul')
+# Vesrsion 3.1
+# def build_q_network():
+#     main_input = Input(shape=(MAIN_DEPTH, MAIN_LENGTH, MAIN_LENGTH), dtype='float32')
+#     aux_input = Input(shape=(AUX_DEPTH, AUX_LENGTH, AUX_LENGTH), dtype='float32')
+#
+#     c = OUTPUT_LENGTH / 2
+#     ave = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(main_input)
+#     ave1 = Cropping2D(cropping=((c, c), (c, c)))(ave)
+#     ave2 = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(ave)
+#     gra = Cropping2D(cropping=((c * 2, c * 2), (c * 2, c * 2)))(main_input)
+#
+#     merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
+#     x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
+#     x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
+#     main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
+#     merge2 = merge([main_output, aux_input], mode='concat', concat_axis=1)
+#     x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merge2)
+#     x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
+#
+#     v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
+#     v = MaxPooling2D(pool_size=(3, 3))(v)
+#     v = Flatten()(v)
+#     v = Dense(32, activation='relu', name='value/dense_1')(v)
+#     v = Dense(1, name='value/dense_2')(v)
+#     value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
+#                    output_shape=(OUTPUT_LENGTH*OUTPUT_LENGTH,), name='value/lambda')(v)
+#
+#     z = Convolution2D(1, 1, 1, name='advantage/conv')(x)
+#     z = Flatten()(z)
+#     advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(z)
+#
+#     q_values = merge([value, advantage], mode='sum')
+#     legal = Flatten()(Lambda(lambda a: a[:, -1:, :, :])(aux_input))
+#     q_values_legal = merge([q_values, legal], mode='mul')
+#
+#     model = Model(input=[main_input, aux_input], output=q_values_legal)
+#
+#     return main_input, aux_input, q_values_legal, model
 
-    model = Model(input=[main_input, aux_input], output=q_values_legal)
-
-    return main_input, aux_input, q_values_legal, model
-
+# Version 3.2
+# merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
+# x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
+# x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
+# main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
+# merge2 = merge([main_output, aux_input], mode='concat', concat_axis=1)
+# x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merge2)
+# x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
+# z = Convolution2D(1, 1, 1, name='main/q_value')(x)
+# z = Flatten()(z)
+# legal = Flatten()(Lambda(lambda a: a[:, -1:, :, :])(aux_input))
+# q_values_legal = merge([z, legal], mode='mul')
 
 class Agent(object):
     def __init__(self, geohash_table, time_step, cycle, demand_cycle, training=True, load_network=False):
@@ -228,7 +261,7 @@ class Agent(object):
         self.replay_memory = deque()
         self.replay_memory_weights = deque()
         self.replay_memory.extend(init_memory)
-        self.replay_memory_weights.extend([len(m[2]) for m in init_memory])
+        self.replay_memory_weights.extend([len(m[3]) for m in init_memory])
         for i in range(N):
             if i % TARGET_UPDATE_INTERVAL == 0:
                 self.sess.run(self.update_target_network)

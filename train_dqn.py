@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import cPickle as pickle
 
@@ -12,7 +11,7 @@ ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
 GEOHASH_TABLE_PATH = 'data/table/zones.csv'
 SCORE_PATH = 'data/results/'
 INITIAL_MEMORY_PATH = SCORE_PATH + 'ex_memory10.pkl'
-INITIAL_MEMORY = False
+INITIAL_MEMORY = True
 LOAD_NETWORK = False
 
 NUM_TRIPS = 12000000
@@ -23,7 +22,7 @@ CYCLE = 1
 ACTION_UPDATE_CYCLE = 15
 DEMAND_FORECAST_INTERVAL = 30
 AVERAGE_CYCLE = 30
-NUM_EPISODES = 20
+NUM_EPISODES = 12
 
 def main():
     print("Loading models...")
@@ -41,7 +40,7 @@ def main():
     if INITIAL_MEMORY:
         with open(INITIAL_MEMORY_PATH, 'r') as f:
             ex_memory = pickle.load(f)
-        agent.init_train(0, ex_memory)
+        agent.init_train(3000, ex_memory)
 
     trip_chunks = load_trip_chunks(TRIP_PATH, NUM_TRIPS, DURATION)[:NUM_EPISODES]
     for episode, (trips, date, dayofweek, minofday) in enumerate(trip_chunks):
