@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import sys
 import os
 import numpy as np
 import pandas as pd
@@ -633,7 +634,8 @@ class Agent(object):
             # Debug
             print('ITER: {0:6d} / EPSILON: {1:.4f} / BETA: {2:.4f} / Q_MAX: {3:.3f} / LOSS: {4:.3f}'.format(
                 self.num_iters, self.epsilon, self.beta, avg_q_max, avg_loss))
-
+            sys.stdout.flush()
+            
         self.start_iter = self.num_iters
         self.total_q_max = 0
         self.total_loss = 0
