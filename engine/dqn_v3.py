@@ -9,7 +9,6 @@ from collections import deque
 from keras.models import Model
 from keras.layers import Input, Flatten, Dense, merge, Reshape, Activation, Convolution2D, \
     AveragePooling2D, MaxPooling2D, Cropping2D, Lambda
-# from keras import backend as K
 
 KERAS_BACKEND = 'tensorflow'
 DATA_PATH = 'data/dqn'
@@ -24,8 +23,8 @@ LONGITUDE_MIN = -74.0407
 LONGITUDE_MAX = -73.7501
 X_SCALE = 100.0
 W_SCALE = 100.0
-TOTAL_DEMAND_MEAN = 8606
-TOTAL_DEMAND_STD = 3768
+TOTAL_DEMAND_MEAN = 8606 / W_SCALE
+TOTAL_DEMAND_STD = 3768 / W_SCALE
 
 MAP_WIDTH = int((LONGITUDE_MAX - LONGITUDE_MIN) / LONGITUDE_DELTA) + 1
 MAP_HEIGHT = int((LATITUDE_MAX - LATITUDE_MIN) / LATITUDE_DELTA) + 1
@@ -230,7 +229,7 @@ class Agent(object):
         self.update_time()
         if not self.training:
             self.update_demand(requests)
-        env_state, resource = self.preprocess(vehicles)
+        env_state, X_idle, resource = self.preprocess(vehicles)
 
         if self.training:
             self.memorize_experience(env_state, vehicles)
@@ -258,9 +257,9 @@ class Agent(object):
 
         if len(resource.index) > 0:
             if self.training:
-                actions = self.e_greedy(env_state, resource)
+                actions = self.e_greedy(env_state, X_idle, resource)
             else:
-                actions = self.run_policy(env_state, resource)
+                actions = self.run_policy(env_state, X_idle, resource)
         else:
             actions = []
 
@@ -329,19 +328,20 @@ class Agent(object):
         X = df.pivot(index='x', columns='y', values='X').fillna(0).values.astype(np.float32) / X_SCALE
         X1 = df.pivot(index='x', columns='y', values='X1').fillna(0).values.astype(np.float32) / X_SCALE
         X2 = df.pivot(index='x', columns='y', values='X2').fillna(0).values.astype(np.float32) / X_SCALE
-        X_idle = df.pivot(index='x', columns='y', values='X_idle').fillna(0).values.astype(np.float32) / X_SCALE
-        env_state = [W, X, X1, X2, X_idle]
+        X_idle = df.pivot(index='x', columns='y', values='X_idle').fillna(0).values.astype(np.float32)
+        env_state = [W, X, X1, X2]
 
-        return env_state, R_idle
+        return env_state, X_idle, R_idle
 
-    def e_greedy(self, env_state, resource):
+    def e_greedy(self, env_state, X_idle, resource):
         dispatch = []
         actions = []
-        xy_idle = [(x, y) for y in range(MAP_HEIGHT) for x in range(MAP_WIDTH) if env_state[-1][x, y] > 0]
+        W, X, X1, X2 = env_state
+        xy_idle = [(x, y) for y in range(MAP_HEIGHT) for x in range(MAP_WIDTH) if X_idle[x, y] > 0]
 
         if self.epsilon < 1:
             xy2index = {(x, y):i for i, (x, y) in enumerate(xy_idle)}
-            aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, xy_idle))
+            aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, W.sum(), xy_idle))
             main_features = np.float32(self.create_main_feature(env_state, xy_idle))
             aids = np.argmax(self.q_values.eval(feed_dict={
                     self.s: np.float32(main_features), self.x: np.float32(aux_features)}), axis=1)
@@ -378,12 +378,12 @@ class Agent(object):
         return dispatch
 
 
-    def run_policy(self, env_state, resource):
+    def run_policy(self, env_state, X_idle, resource):
         dispatch = []
-        W, X, X1, X2, X_idle = env_state
+        W, X, X1, X2 = env_state
         xy_idle = [(x, y) for y in range(MAP_HEIGHT) for x in range(MAP_WIDTH) if X_idle[x, y] > 0]
         xy2index = {(x, y): i for i, (x, y) in enumerate(xy_idle)}
-        aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, xy_idle))
+        aux_features = np.float32(self.create_aux_feature(self.minofday, self.dayofweek, W.sum(), xy_idle))
 
         for vid, (x, y) in resource[['x', 'y']].iterrows():
             aux_feature = aux_features[[xy2index[(x, y)]]]
@@ -404,7 +404,6 @@ class Agent(object):
                         new_x, new_y = x_, y_
             X1[x, y] -= 1.0 / X_SCALE
             X2[x, y] -= 1.0 / X_SCALE
-            X_idle[x, y] -= 1.0 / X_SCALE
             X1[new_x, new_y] += 1.0 / X_SCALE
             X2[new_x, new_y] += 1.0 / X_SCALE
 
@@ -413,15 +412,15 @@ class Agent(object):
 
 
     def create_main_feature(self, env_state, positions):
-        features = [[pad_crop(s, x, y, MAIN_LENGTH) for s in env_state]
+        features = [[pad_crop(s, x, y, MAIN_LENGTH) for s in env_state[:MAIN_DEPTH]]
                     for x, y in positions]
         return features
 
-    def create_aux_feature(self, minofday, dayofweek, positions):
+    def create_aux_feature(self, minofday, dayofweek, total_W, positions):
         aux_features = []
         min = minofday / 1440.0
         day = (dayofweek + int(min)) / 7.0
-        total_W = (self.df.W.sum() - TOTAL_DEMAND_MEAN) / TOTAL_DEMAND_STD
+        W = (total_W - TOTAL_DEMAND_MEAN) / TOTAL_DEMAND_STD
         for i, (x, y) in enumerate(positions):
             aux = np.zeros((AUX_DEPTH, AUX_LENGTH, AUX_LENGTH))
             aux[0, :, :] = np.sin(min)
@@ -436,7 +435,7 @@ class Agent(object):
             aux[9, :, :] = self.d_matrix
             legal_map = pad_crop(self.legal_map, x, y, AUX_LENGTH)
             legal_map[AUX_LENGTH / 2 + 1, AUX_LENGTH / 2 + 1] = 1
-            aux[10, :, :] = total_W
+            aux[10, :, :] = W
             aux[11, :, :] = legal_map
             aux_features.append(aux)
 
@@ -496,8 +495,8 @@ class Agent(object):
         for i in memory_index:
             data = self.replay_memory[i]
             samples = np.random.randint(self.replay_memory_weights[i], size=SAMPLE_PER_FRAME)
-            aux_batch += self.create_aux_feature(data[0], data[1], data[3][samples])
-            next_aux_batch += self.create_aux_feature(data[0] + self.cycle, data[1], data[7][samples])
+            aux_batch += self.create_aux_feature(data[0], data[1], data[2][0].sum(), data[3][samples])
+            next_aux_batch += self.create_aux_feature(data[0] + self.cycle, data[1], data[6][0].sum(), data[7][samples])
             main_batch += self.create_main_feature(data[2], data[3][samples])
             next_main_batch += self.create_main_feature(data[6], data[7][samples])
             action_batch += data[4][samples].tolist()
