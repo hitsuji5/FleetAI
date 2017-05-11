@@ -83,7 +83,8 @@ def build_q_network():
     gra = Cropping2D(cropping=((c * 2, c * 2), (c * 2, c * 2)))(main_input)
     x = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
     x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(x)
-    main_output = Convolution2D(32, 5, 5, activation='relu', name='main/conv_2')(x)
+    x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
+    main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
 
     aux_output = Convolution2D(32, 1, 1, activation='relu', name='aux/conv')(aux_input)
     merged = merge([main_output, aux_output], mode='concat', concat_axis=1)
