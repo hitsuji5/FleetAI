@@ -24,13 +24,15 @@ LONGITUDE_MIN = -74.0407
 LONGITUDE_MAX = -73.7501
 X_SCALE = 100.0
 W_SCALE = 100.0
+TOTAL_DEMAND_MEAN = 8606
+TOTAL_DEMAND_STD = 3768
 
 MAP_WIDTH = int((LONGITUDE_MAX - LONGITUDE_MIN) / LONGITUDE_DELTA) + 1
 MAP_HEIGHT = int((LATITUDE_MAX - LATITUDE_MIN) / LATITUDE_DELTA) + 1
 MAIN_LENGTH = 51
-MAIN_DEPTH = 5
-AUX_LENGTH = 15 #23
-AUX_DEPTH = 11
+MAIN_DEPTH = 4
+AUX_LENGTH = 15
+AUX_DEPTH = 12
 MAX_MOVE = 7
 OUTPUT_LENGTH = 15
 STAY_ACTION = OUTPUT_LENGTH * OUTPUT_LENGTH / 2
@@ -70,25 +72,24 @@ def build_d_network():
     model = Model(input=input, output=output)
     return model
 
-# Version 3.3
+# Version 3.5
 def build_q_network():
     main_input = Input(shape=(MAIN_DEPTH, MAIN_LENGTH, MAIN_LENGTH), dtype='float32')
     aux_input = Input(shape=(AUX_DEPTH, AUX_LENGTH, AUX_LENGTH), dtype='float32')
 
     c = OUTPUT_LENGTH / 2
-    sliced_input = Lambda(lambda x: x[:, :-1, :, :])(main_input)
-    ave = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(sliced_input)
+    ave = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(main_input)
     ave1 = Cropping2D(cropping=((c, c), (c, c)))(ave)
     ave2 = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(ave)
     gra = Cropping2D(cropping=((c * 2, c * 2), (c * 2, c * 2)))(main_input)
+    x = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
+    x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(x)
+    main_output = Convolution2D(32, 5, 5, activation='relu', name='main/conv_2')(x)
 
-    merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
-    x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
-    x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
-    main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
-    aux_output = Convolution2D(16, 1, 1, activation='relu', name='ayx/conv')(aux_input)
-    merge2 = merge([main_output, aux_output], mode='concat', concat_axis=1)
-    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv')(merge2)
+    aux_output = Convolution2D(32, 1, 1, activation='relu', name='aux/conv')(aux_input)
+    merged = merge([main_output, aux_output], mode='concat', concat_axis=1)
+    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merged)
+    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
     x = Convolution2D(1, 1, 1, name='main/q_value')(x)
     z = Flatten()(x)
     legal = Flatten()(Lambda(lambda x: x[:, -1:, :, :])(aux_input))
@@ -98,79 +99,6 @@ def build_q_network():
 
     return main_input, aux_input, q_values, model
 
-# Version 3.4
-# merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
-# x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
-# x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
-# main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
-# aux_output = Convolution2D(16, 1, 1, activation='relu', name='aux/conv')(aux_input)
-# merge2 = merge([main_output, aux_output], mode='concat', concat_axis=1)
-# x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv')(merge2)
-#
-# v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
-# v = MaxPooling2D(pool_size=(3, 3))(v)
-# v = Flatten()(v)
-# v = Dense(32, activation='relu', name='value/dense_1')(v)
-# v = Dense(1, name='value/dense_2')(v)
-# value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
-#                output_shape=(OUTPUT_LENGTH * OUTPUT_LENGTH,), name='value/lambda')(v)
-#
-# z = Convolution2D(1, 1, 1, name='advantage/conv')(x)
-# z = Flatten()(z)
-# advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(z)
-
-
-# Vesrsion 3.1
-# def build_q_network():
-#     main_input = Input(shape=(MAIN_DEPTH, MAIN_LENGTH, MAIN_LENGTH), dtype='float32')
-#     aux_input = Input(shape=(AUX_DEPTH, AUX_LENGTH, AUX_LENGTH), dtype='float32')
-#
-#     c = OUTPUT_LENGTH / 2
-#     ave = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(main_input)
-#     ave1 = Cropping2D(cropping=((c, c), (c, c)))(ave)
-#     ave2 = AveragePooling2D(pool_size=(OUTPUT_LENGTH, OUTPUT_LENGTH), strides=(1, 1))(ave)
-#     gra = Cropping2D(cropping=((c * 2, c * 2), (c * 2, c * 2)))(main_input)
-#
-#     merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
-#     x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
-#     x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
-#     main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
-#     merge2 = merge([main_output, aux_input], mode='concat', concat_axis=1)
-#     x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merge2)
-#     x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
-#
-#     v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
-#     v = MaxPooling2D(pool_size=(3, 3))(v)
-#     v = Flatten()(v)
-#     v = Dense(32, activation='relu', name='value/dense_1')(v)
-#     v = Dense(1, name='value/dense_2')(v)
-#     value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
-#                    output_shape=(OUTPUT_LENGTH*OUTPUT_LENGTH,), name='value/lambda')(v)
-#
-#     z = Convolution2D(1, 1, 1, name='advantage/conv')(x)
-#     z = Flatten()(z)
-#     advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(z)
-#
-#     q_values = merge([value, advantage], mode='sum')
-#     legal = Flatten()(Lambda(lambda a: a[:, -1:, :, :])(aux_input))
-#     q_values_legal = merge([q_values, legal], mode='mul')
-#
-#     model = Model(input=[main_input, aux_input], output=q_values_legal)
-#
-#     return main_input, aux_input, q_values_legal, model
-
-# Version 3.2
-# merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
-# x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
-# x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
-# main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
-# merge2 = merge([main_output, aux_input], mode='concat', concat_axis=1)
-# x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merge2)
-# x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
-# z = Convolution2D(1, 1, 1, name='main/q_value')(x)
-# z = Flatten()(z)
-# legal = Flatten()(Lambda(lambda a: a[:, -1:, :, :])(aux_input))
-# q_values_legal = merge([z, legal], mode='mul')
 
 class Agent(object):
     def __init__(self, geohash_table, time_step, cycle, demand_cycle, training=True, load_network=False):
@@ -395,6 +323,7 @@ class Agent(object):
         self.df = self.df.fillna(0)
         self.df['X1'] -= self.df.W / 2.0
         self.df['X2'] -= self.df.W
+
         df = self.df.reset_index()
         W = df.pivot(index='x', columns='y', values='W').fillna(0).values.astype(np.float32) / W_SCALE
         X = df.pivot(index='x', columns='y', values='X').fillna(0).values.astype(np.float32) / X_SCALE
@@ -492,6 +421,7 @@ class Agent(object):
         aux_features = []
         min = minofday / 1440.0
         day = (dayofweek + int(min)) / 7.0
+        total_W = (self.df.W.sum() - TOTAL_DEMAND_MEAN) / TOTAL_DEMAND_STD
         for i, (x, y) in enumerate(positions):
             aux = np.zeros((AUX_DEPTH, AUX_LENGTH, AUX_LENGTH))
             aux[0, :, :] = np.sin(min)
@@ -506,7 +436,8 @@ class Agent(object):
             aux[9, :, :] = self.d_matrix
             legal_map = pad_crop(self.legal_map, x, y, AUX_LENGTH)
             legal_map[AUX_LENGTH / 2 + 1, AUX_LENGTH / 2 + 1] = 1
-            aux[10, :, :] = legal_map
+            aux[10, :, :] = total_W
+            aux[11, :, :] = legal_map
             aux_features.append(aux)
 
         return aux_features
