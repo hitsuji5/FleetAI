@@ -13,7 +13,7 @@ RIDE_REWARD = 5.0
 TRIP_REWARD = 1.0
 WAIT_COST = 0.3
 MIN_TRIPTIME = 1.0 # in meters
-ASSIGNMENT_SPEED = 15.0 # km/h (grand circle distance)
+ASSIGNMENT_SPEED = 15 # km/h (grand circle distance)
 
 class FleetSimulator(object):
     """
@@ -124,7 +124,8 @@ class FleetSimulator(object):
             vloc = vehicle.location
 
             d = gh.distance_in_meters(vloc[0], vloc[1], ploc[0], ploc[1])
-            wait_time = 1 + d / (ASSIGNMENT_SPEED * 1000 / 60)
+            # wait_time = 1 + d / (ASSIGNMENT_SPEED * 1000 / 60)
+            wait_time = (d * 2 / 1.414) / (ASSIGNMENT_SPEED * 1000 / 60)
             trip_time = request.trip_time
             vehicle.start_service(dloc, wait_time, trip_time)
             wait += wait_time

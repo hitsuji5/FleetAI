@@ -98,6 +98,28 @@ def build_q_network():
 
     return main_input, aux_input, q_values, model
 
+# Version 3.4
+# merge1 = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
+# x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(merge1)
+# x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
+# main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
+# aux_output = Convolution2D(16, 1, 1, activation='relu', name='aux/conv')(aux_input)
+# merge2 = merge([main_output, aux_output], mode='concat', concat_axis=1)
+# x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv')(merge2)
+#
+# v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
+# v = MaxPooling2D(pool_size=(3, 3))(v)
+# v = Flatten()(v)
+# v = Dense(32, activation='relu', name='value/dense_1')(v)
+# v = Dense(1, name='value/dense_2')(v)
+# value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
+#                output_shape=(OUTPUT_LENGTH * OUTPUT_LENGTH,), name='value/lambda')(v)
+#
+# z = Convolution2D(1, 1, 1, name='advantage/conv')(x)
+# z = Flatten()(z)
+# advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(z)
+
+
 # Vesrsion 3.1
 # def build_q_network():
 #     main_input = Input(shape=(MAIN_DEPTH, MAIN_LENGTH, MAIN_LENGTH), dtype='float32')
@@ -635,7 +657,7 @@ class Agent(object):
             print('ITER: {0:6d} / EPSILON: {1:.4f} / BETA: {2:.4f} / Q_MAX: {3:.3f} / LOSS: {4:.3f}'.format(
                 self.num_iters, self.epsilon, self.beta, avg_q_max, avg_loss))
             sys.stdout.flush()
-            
+
         self.start_iter = self.num_iters
         self.total_q_max = 0
         self.total_loss = 0
