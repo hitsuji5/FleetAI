@@ -9,6 +9,7 @@ from collections import deque
 from keras.models import Model
 from keras.layers import Input, Flatten, Dense, merge, Reshape, Activation, Convolution2D, \
     AveragePooling2D, MaxPooling2D, Cropping2D, Lambda
+from keras import backend as K
 
 KERAS_BACKEND = 'tensorflow'
 DATA_PATH = 'data/dqn'
@@ -71,7 +72,7 @@ def build_d_network():
     model = Model(input=input, output=output)
     return model
 
-# Version 3.5
+# Version 3.5.1
 def build_q_network():
     main_input = Input(shape=(MAIN_DEPTH, MAIN_LENGTH, MAIN_LENGTH), dtype='float32')
     aux_input = Input(shape=(AUX_DEPTH, AUX_LENGTH, AUX_LENGTH), dtype='float32')
@@ -83,17 +84,28 @@ def build_q_network():
     gra = Cropping2D(cropping=((c * 2, c * 2), (c * 2, c * 2)))(main_input)
     x = merge([gra, ave1, ave2], mode='concat', concat_axis=1)
     x = Convolution2D(16, 5, 5, activation='relu', name='main/conv_1')(x)
-    main_output = Convolution2D(32, 5, 5, activation='relu', name='main/conv_2')(x)
+    x = Convolution2D(32, 3, 3, activation='relu', name='main/conv_2')(x)
+    main_output = Convolution2D(64, 3, 3, activation='relu', name='main/conv_3')(x)
 
     aux_output = Convolution2D(32, 1, 1, activation='relu', name='aux/conv')(aux_input)
     merged = merge([main_output, aux_output], mode='concat', concat_axis=1)
     x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_1')(merged)
-    x = Convolution2D(128, 1, 1, activation='relu', name='merge/conv_2')(x)
-    x = Convolution2D(1, 1, 1, name='main/q_value')(x)
-    z = Flatten()(x)
-    legal = Flatten()(Lambda(lambda x: x[:, -1:, :, :])(aux_input))
-    q_values = merge([z, legal], mode='mul')
 
+    v = Convolution2D(1, 1, 1, activation='relu', name='value/conv')(x)
+    v = MaxPooling2D(pool_size=(3, 3))(v)
+    v = Flatten()(v)
+    v = Dense(32, activation='relu', name='value/dense_1')(v)
+    v = Dense(1, name='value/dense_2')(v)
+    value = Lambda(lambda s: K.expand_dims(s[:, 0], dim=-1),
+                   output_shape=(OUTPUT_LENGTH * OUTPUT_LENGTH,), name='value/lambda')(v)
+
+    z = Convolution2D(1, 1, 1, name='advantage/conv')(x)
+    z = Flatten()(z)
+    advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), name='advantage/lambda')(z)
+
+    q_raw = merge([value, advantage], mode='sum')
+    legal = Flatten()(Lambda(lambda a: a[:, -1:, :, :])(aux_input))
+    q_values = merge([q_raw, legal], mode='mul')
     model = Model(input=[main_input, aux_input], output=q_values)
 
     return main_input, aux_input, q_values, model
@@ -216,14 +228,19 @@ class Agent(object):
             if i % TARGET_UPDATE_INTERVAL == 0:
                 self.sess.run(self.update_target_network)
 
-            if i % summary_duration == 0:
-                avg_q_max = self.total_q_max / summary_duration
-                avg_loss = self.total_loss / summary_duration
-                print('ITER: {:d} / Q_MAX: {:.3f} / LOSS: {:.3f}'.format(i, avg_q_max, avg_loss))
-                self.total_q_max = 0
-                self.total_loss = 0
+            # if i % summary_duration == 0:
+            #     avg_q_max = self.total_q_max / summary_duration
+            #     avg_loss = self.total_loss / summary_duration
+            #     print('ITER: {:d} / Q_MAX: {:.3f} / LOSS: {:.3f}'.format(i, avg_q_max, avg_loss))
+            #     self.total_q_max = 0
+            #     self.total_loss = 0
 
             self.train_network()
+
+            if i % SUMMARY_INTERVAL == 0:
+                self.write_summary()
+
+            self.num_iters += 1
 
     def get_actions(self, vehicles, requests):
         self.update_time()
