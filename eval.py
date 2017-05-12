@@ -39,7 +39,7 @@ def main():
     pdest_table = pd.read_csv(PDEST_TABLE_PATH, index_col=['dayofweek', 'hour', 'pickup_zone'])
 
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
-    agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE)
+    agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE, T=3, penalty=20.0)
 
 
     trip_chunks = load_trip_eval(TRIP_PATH, NUM_TRIPS)
