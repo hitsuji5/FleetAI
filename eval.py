@@ -49,7 +49,7 @@ def main():
         print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d}".format(
             episode, date, env.dayofweek, env.minofday
         ))
-        score, vscore = run(env, agent, NUM_STEPS, no_op_steps=30, average_cycle=30)
+        score, vscore = run(env, agent, NUM_STEPS, no_op_steps=2, average_cycle=2)
         describe(score)
         score.to_csv(SCORE_PATH + 'score' + str(dayofweek) + '.csv', index=False)
         vscore.to_csv(SCORE_PATH + 'vscore' + str(dayofweek) + '.csv', index=False)
