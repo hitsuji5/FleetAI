@@ -4,15 +4,17 @@ import cPickle as pickle
 from engine.simulator import FleetSimulator
 from engine.dqn_v3 import Agent
 from experiment import run, load_trip_chunks, describe
+from keras.models import model_from_json
+
 
 GRAPH_PATH = 'data/pickle/nyc_network_graph.pkl'
 TRIP_PATH = 'data/nyc_taxi/trips_2016-05.csv'
-ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
+ETA_MODEL_PATH = 'data/model/eta/'
 GEOHASH_TABLE_PATH = 'data/table/zones.csv'
 SCORE_PATH = 'data/results/'
 INITIAL_MEMORY_PATH = SCORE_PATH + 'ex_memory10.pkl'
 INITIAL_MEMORY = True
-LOAD_NETWORK = False
+LOAD_NETWORK = True
 
 NUM_TRIPS = 12000000
 DURATION = 1200
@@ -26,33 +28,31 @@ NUM_EPISODES = 12
 
 def main():
     print("Loading models...")
+    geohash_table = pd.read_csv(GEOHASH_TABLE_PATH, index_col='geohash')
+    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, 30, training=False, load_network=True)
+
     with open(GRAPH_PATH, 'r') as f:
         G = pickle.load(f)
-    with open(ETA_MODEL_PATH, 'r') as f:
-        eta_model = pickle.load(f)
-    num_fleets = NUM_FLEETS
-
-    geohash_table = pd.read_csv(GEOHASH_TABLE_PATH, index_col='geohash')
-
+    with open(ETA_MODEL_PATH + 'model.json', 'r') as f:
+        eta_model = model_from_json(f.read())
+    eta_model.load_weights(ETA_MODEL_PATH + 'model.h5')
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
-    agent = Agent(geohash_table, CYCLE, ACTION_UPDATE_CYCLE, DEMAND_FORECAST_INTERVAL,
-                  training=True, load_network=LOAD_NETWORK)
+
     if INITIAL_MEMORY:
         with open(INITIAL_MEMORY_PATH, 'r') as f:
             ex_memory = pickle.load(f)
-        agent.init_train(3000, ex_memory)
+        agent.init_train(0, ex_memory)
 
     trip_chunks = load_trip_chunks(TRIP_PATH, NUM_TRIPS, DURATION)[:NUM_EPISODES]
     for episode, (trips, date, dayofweek, minofday) in enumerate(trip_chunks):
-        # num_fleets = int(np.sqrt(len(trips)/120000.0) * NUM_FLEETS)
-        env.reset(num_fleets, trips, dayofweek, minofday)
+        env.reset(NUM_FLEETS, trips, dayofweek, minofday)
         _, requests, _, _, _ = env.step()
         agent.reset(requests, env.dayofweek, env.minofday)
         num_steps = DURATION / CYCLE - NO_OP_STEPS
 
         print("#############################################################################")
-        print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d} / VEHICLES: {:d}".format(
-            episode, date, env.dayofweek, env.minofday, num_fleets
+        print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d}".format(
+            episode, date, env.dayofweek, env.minofday
         ))
         score, _ = run(env, agent, num_steps, average_cycle=AVERAGE_CYCLE, cheat=True)
         describe(score)
