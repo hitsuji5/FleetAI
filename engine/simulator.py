@@ -14,6 +14,14 @@ TRIP_REWARD = 1.0
 WAIT_COST = 0.3
 MIN_TRIPTIME = 1.0 # in meters
 ASSIGNMENT_SPEED = 15 # km/h (grand circle distance)
+# orders: [u'dlat', u'dlon', u'plat', u'plon', u'trip_distance', u'sin_dayofweek',
+#        u'cos_dayofweek', u'sin_hour', u'cos_hour']
+ETA_FEATURE_MEANS = np.array([  4.07513176e+01,  -7.39688234e+01,   4.07506603e+01,
+        -7.39693936e+01,   4.80693066e+03,   4.01136460e-01,
+         8.70154076e-01,   5.33841407e-01,   8.03161476e-01])
+ETA_FEATURE_STDS = np.array([  3.54302545e-02,   3.71064076e-02,   3.23938019e-02,
+         3.98814881e-02,   5.61793233e+03,   2.58391308e-01,
+         1.23107124e-01,   2.27269823e-01,   1.35253205e-01])
 
 class FleetSimulator(object):
     """
@@ -60,10 +68,10 @@ class FleetSimulator(object):
             X = self.get_vehicles_location()
             W = requests[(requests.second >= self.current_time)
                                  &(requests.second < self.current_time + TIMESTEP)]
-            assignments = self.match(X, W)
-            wait_ = self.assign(assignments)
+            rids, vids = self.match(X, W)
+            wait_ = self.assign(rids, vids)
             wait += wait_
-            reject += len(W) - len(assignments)
+            reject += len(W) - len(rids)
             self.update_time()
 
         vehicles = self.get_vehicles_dataframe()
@@ -106,29 +114,25 @@ class FleetSimulator(object):
             else:
                 vids[i] = vid
                 d[:, vid] = float('inf')
-        assignments = zip(tasks.index[:N][vids >= 0], R['id'].iloc[vids[vids >= 0]])
-        return assignments
+        # assignments = zip(tasks.index[:N][vids >= 0], R['id'].iloc[vids[vids >= 0]])
 
+        return tasks.index[:N][vids >= 0], R['id'].iloc[vids[vids >= 0]]
 
-    def assign(self, assignments):
+    def assign(self, rids, vids):
         """
         assign ride requests to selected vehicles
         """
+        requests = self.requests.loc[rids]
+        plocs = zip(requests.plat, requests.plon)
+        dlocs = zip(requests.dlat, requests.dlon)
+        vlocs = np.array([self.vehicles[vid].location for vid in vids])
+        distances = 1.414 * gh.distance_in_meters(vlocs[:, 0], vlocs[:, 1], requests.plat, requests.plon)
+        wait_time = self.predict_eta(vlocs, plocs, distances)
+        trip_time = requests.trip_time.values
 
-        wait = 0
-        for r, v in assignments:
-            vehicle = self.vehicles[v] # pointer to a Vehicle object
-            request = self.requests.loc[r]
-            ploc = (request.plat, request.plon)
-            dloc = (request.dlat, request.dlon)
-            vloc = vehicle.location
-
-            d = gh.distance_in_meters(vloc[0], vloc[1], ploc[0], ploc[1])
-            # wait_time = 1 + d / (ASSIGNMENT_SPEED * 1000 / 60)
-            wait_time = (d * 2 / 1.414) / (ASSIGNMENT_SPEED * 1000 / 60)
-            trip_time = request.trip_time
-            vehicle.start_service(dloc, wait_time, trip_time)
-            wait += wait_time
+        for i, vid in enumerate(vids):
+            self.vehicles[vid].start_service(dlocs[i], wait_time[i], trip_time[i])
+        wait = wait_time.sum()
 
         return wait
 
@@ -142,14 +146,16 @@ class FleetSimulator(object):
             cache.append((p, s, t))
             distances.append(d)
 
-        N = len(vids)
-        X = np.zeros((N, 7))
-        X[:, 0] = self.dayofweek
-        X[:, 1] = self.minofday / 60.0
-        X[:, 2:4] = vlocs
-        X[:, 4:6] = targets
-        X[:, 6] = distances
-        trip_times = self.eta_model.predict(X)
+        # N = len(vids)
+        # X = np.zeros((N, 7))
+        # X[:, 0] = self.dayofweek
+        # X[:, 1] = self.minofday / 60.0
+        # X[:, 2:4] = vlocs
+        # X[:, 4:6] = targets
+        # X[:, 6] = distances
+        # trip_times = self.eta_model.predict(X)
+
+        trip_times = self.predict_eta(vlocs, targets, distances)
 
         for i, vid in enumerate(vids):
             if trip_times[i] > MIN_TRIPTIME:
@@ -159,6 +165,24 @@ class FleetSimulator(object):
                 eta = min(trip_times[i], self.max_action_time)
                 self.vehicles[vid].route(trajectory[:np.ceil(eta).astype(int)], eta)
         return
+
+
+    def predict_eta(self, source, target, distance):
+        N = len(source)
+        X = np.zeros((N, 9))
+        X[:, 0:2] = source
+        X[:, 2:4] = target
+        X[:, 4] = distance
+        X[:, 5] = np.sin(self.dayofweek / 7.0)
+        X[:, 6] = np.cos(self.dayofweek / 7.0)
+        X[:, 7] = np.sin(self.minofday / 1440.0)
+        X[:, 8] = np.cos(self.minofday / 1440.0)
+        X = (X - ETA_FEATURE_MEANS) / ETA_FEATURE_STDS
+        trip_times = self.eta_model.predict(X)[:, 0]
+        trip_times = np.maximum(trip_times, 1.0)
+
+        return trip_times
+
 
 
 class Vehicle(object):

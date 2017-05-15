@@ -8,7 +8,7 @@ from experiment import run, load_trip_eval, describe
 GRAPH_PATH = 'data/pickle/nyc_network_graph.pkl'
 TRIP_PATH = 'data/nyc_taxi/trips_2016-06.csv'
 DEMAND_MODEL_PATH = 'data/model/demand/'
-ETA_MODEL_PATH = 'data/pickle/triptime_predictor.pkl'
+ETA_MODEL_PATH = 'data/model/eta/'
 GEOHASH_TABLE_PATH = 'data/table/zones.csv'
 ETA_TABLE_PATH = 'data/table/eta.csv'
 PDEST_TABLE_PATH = 'data/table/pdest.csv'
@@ -24,22 +24,23 @@ NUM_STEPS = 24 * 60 / CYCLE
 def main():
 
     print("Loading models...")
+    # geohash_table = pd.read_csv(GEOHASH_TABLE_PATH, index_col='geohash')
+    # eta_table = pd.read_csv(ETA_TABLE_PATH, index_col=['dayofweek', 'hour', 'pickup_zone'])
+    # pdest_table = pd.read_csv(PDEST_TABLE_PATH, index_col=['dayofweek', 'hour', 'pickup_zone'])
+    # with open(DEMAND_MODEL_PATH + 'model.json', 'r') as f:
+    #     demand_model = model_from_json(f.read())
+    # demand_model.load_weights(DEMAND_MODEL_PATH + 'model.h5')
+    # agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE, T=3, penalty=20.0)
+
     with open(GRAPH_PATH, 'r') as f:
         G = pickle.load(f)
-    with open(ETA_MODEL_PATH, 'r') as f:
-        eta_model = pickle.load(f)
-
-    with open(DEMAND_MODEL_PATH + 'model.json', 'r') as f:
-        demand_model = f.read()
-    demand_model = model_from_json(demand_model)
-    demand_model.load_weights(DEMAND_MODEL_PATH + 'model.h5')
-
-    geohash_table = pd.read_csv(GEOHASH_TABLE_PATH, index_col='geohash')
-    eta_table = pd.read_csv(ETA_TABLE_PATH, index_col=['dayofweek', 'hour', 'pickup_zone'])
-    pdest_table = pd.read_csv(PDEST_TABLE_PATH, index_col=['dayofweek', 'hour', 'pickup_zone'])
+    # with open(ETA_MODEL_PATH, 'r') as f:
+    #     eta_model = pickle.load(f)
+    with open(ETA_MODEL_PATH + 'model.json', 'r') as f:
+        eta_model = model_from_json(f.read())
+    eta_model.load_weights(ETA_MODEL_PATH + 'model.h5')
 
     env = FleetSimulator(G, eta_model, CYCLE, ACTION_UPDATE_CYCLE)
-    agent = Agent(geohash_table, eta_table, pdest_table, demand_model, CYCLE, T=3, penalty=20.0)
 
 
     trip_chunks = load_trip_eval(TRIP_PATH, NUM_TRIPS)
@@ -49,7 +50,7 @@ def main():
         print("EPISODE: {:d} / DATE: {:d} / DAYOFWEEK: {:d} / MINUTES: {:d}".format(
             episode, date, env.dayofweek, env.minofday
         ))
-        score, vscore = run(env, agent, NUM_STEPS, no_op_steps=2, average_cycle=2)
+        score, vscore = run(env, None, NUM_STEPS, no_op_steps=2, average_cycle=2)
         describe(score)
         score.to_csv(SCORE_PATH + 'score' + str(dayofweek) + '.csv', index=False)
         vscore.to_csv(SCORE_PATH + 'vscore' + str(dayofweek) + '.csv', index=False)
